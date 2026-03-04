@@ -6,6 +6,8 @@ cd /Users/yamamotoyoshifumi/projects/ebay/supplier-scraper-main
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
+export SUPABASE_URL="https://<project>.supabase.co"
+export SUPABASE_SERVICE_ROLE_KEY="<service_role_key>"
 uvicorn apps.dashboard_api.main:app --reload --host 0.0.0.0 --port 8080
 ```
 

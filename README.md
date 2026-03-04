@@ -18,5 +18,9 @@
 - `GET /api/runs`
 - `GET /api/errors`
 
+必要な環境変数:
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`（または `SUPABASE_KEY`）
+
 ## 起動
 - `docs/bootstrap.md` を参照
