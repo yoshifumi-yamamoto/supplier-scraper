@@ -1,0 +1,32 @@
+:root {
+  --bg: #f1f4f7;
+  --card: #ffffff;
+  --ink: #13222f;
+  --muted: #5f7486;
+  --accent: #0f8f6f;
+  --danger: #c83f32;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  color: var(--ink);
+  background: radial-gradient(circle at 10% 10%, #ffffff, #edf2f7 45%, #e4ebf2);
+  font-family: "Avenir Next", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+}
+
+.container { max-width: 1100px; margin: 0 auto; padding: 24px 16px 40px; }
+.grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.card { background: var(--card); border-radius: 14px; padding: 16px; box-shadow: 0 10px 30px rgba(19,34,47,.08); }
+.label { font-size: 12px; color: var(--muted); }
+.value { font-size: 28px; font-weight: 700; margin-top: 6px; }
+.section-title { font-size: 18px; margin: 24px 0 10px; }
+.table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 14px; overflow: hidden; }
+.table th, .table td { text-align: left; padding: 12px 10px; border-bottom: 1px solid #eef3f7; font-size: 14px; }
+.badge { font-size: 12px; font-weight: 700; padding: 4px 8px; border-radius: 999px; display: inline-block; }
+.badge-ok { background: #e7f9f2; color: var(--accent); }
+.badge-ng { background: #ffe9e7; color: var(--danger); }
+
+@media (max-width: 900px) {
+  .grid { grid-template-columns: 1fr; }
+}
