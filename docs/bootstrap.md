@@ -24,6 +24,14 @@ npm install
 NEXT_PUBLIC_DASHBOARD_API_BASE=http://127.0.0.1:8080 npm run dev
 ```
 
+## 2-1) MCPサーバー起動
+```bash
+cd /Users/yamamotoyoshifumi/projects/ebay/supplier-scraper-main
+. .venv/bin/activate
+uvicorn apps.mcp_server.main:app --host 0.0.0.0 --port 8090
+```
+詳細: `docs/mcp-server.md`
+
 ## 3) Runner実行
 ```bash
 cd /Users/yamamotoyoshifumi/projects/ebay/supplier-scraper-main
