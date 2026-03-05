@@ -13,9 +13,10 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 TABLE_NAME = "items"
 
-PAGE_SIZE = int(os.getenv("SUPABASE_PAGE_SIZE", 1000))
-FETCH_MAX_RETRIES = int(os.getenv("FETCH_MAX_RETRIES", 4))
+PAGE_SIZE = int(os.getenv("SUPABASE_PAGE_SIZE", 200))
+FETCH_MAX_RETRIES = int(os.getenv("FETCH_MAX_RETRIES", 5))
 FETCH_BACKOFF_BASE = float(os.getenv("FETCH_BACKOFF_BASE", 2.0))
+MAX_PAGES = int(os.getenv("MAX_PAGES", 0))
 
 
 def fetch_data_from_supabase():
@@ -30,6 +31,10 @@ def fetch_data_from_supabase():
     page = 0
 
     while True:
+        if MAX_PAGES > 0 and page >= MAX_PAGES:
+            print(f"[INFO] MAX_PAGES={MAX_PAGES} に到達したため取得を打ち切ります")
+            break
+
         from_idx = page * PAGE_SIZE
         to_idx = from_idx + PAGE_SIZE - 1
         headers["Range"] = f"{from_idx}-{to_idx}"
@@ -77,7 +82,6 @@ def fetch_data_from_supabase():
     return all_data
 
 
-# ヤフーフリマ URLだけ抽出してCSV保存
 def save_filtered_csv(data):
     filtered = [row for row in data if "paypayfleamarket.yahoo.co.jp" in row["stocking_url"]]
 
