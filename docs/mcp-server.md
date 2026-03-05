@@ -45,10 +45,15 @@ systemctl status supplier-mcp.service
 
 # MCP watchdog
 */5 * * * * /bin/bash /root/supplier-scraper-main/scripts/mcp_watchdog.sh >> /var/log/supplier_mcp_watchdog.log 2>&1
+
+# MCP runs (overlap guard in mcp_run_site.sh)
+30 1,13 * * * /bin/bash /root/supplier-scraper-main/scripts/mcp_run_site.sh yahoofleama >> /var/log/mcp_yahoofleama.log 2>&1
+40 1,13 * * * /bin/bash /root/supplier-scraper-main/scripts/mcp_run_site.sh secondstreet >> /var/log/mcp_secondstreet.log 2>&1
 ```
 
 ## 手動実行ヘルパー
 ```bash
+# run_all_scrapes.sh 実行中は自動スキップ
 # site実行
 /bin/bash /root/supplier-scraper-main/scripts/mcp_run_site.sh yahoofleama
 /bin/bash /root/supplier-scraper-main/scripts/mcp_run_site.sh secondstreet 1

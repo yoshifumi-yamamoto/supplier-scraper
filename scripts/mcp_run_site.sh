@@ -2,6 +2,10 @@
 set -euo pipefail
 SITE=${1:-}
 MAX_PAGES=${2:-}
+if pgrep -f '/root/run_all_scrapes.sh' >/dev/null 2>&1; then
+  echo "{\"skipped\":true,\"reason\":\"run_all_scrapes_in_progress\",\"site\":\"$SITE\"}"
+  exit 0
+fi
 if [ -z "$SITE" ]; then
   echo "usage: $0 <site> [max_pages]" >&2
   exit 1
