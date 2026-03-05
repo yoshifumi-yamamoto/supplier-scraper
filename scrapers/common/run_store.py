@@ -55,3 +55,43 @@ def finish_run(run_id: str, status: str, error_summary: str | None = None) -> No
         json=payload,
         timeout=20,
     ).raise_for_status()
+
+
+def start_step(run_id: str, step_name: str) -> str | None:
+    if not _enabled():
+        return None
+    payload = {
+        "run_id": run_id,
+        "step_name": step_name,
+        "status": "running",
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+    res = requests.post(
+        f"{SUPABASE_URL}/rest/v1/scrape_run_steps",
+        headers={**_headers(), "Prefer": "return=representation"},
+        json=payload,
+        timeout=20,
+    )
+    res.raise_for_status()
+    body = res.json()
+    if isinstance(body, list) and body:
+        return body[0].get("id")
+    return None
+
+
+def finish_step(step_id: str | None, status: str, message: str | None = None) -> None:
+    if not _enabled() or not step_id:
+        return
+    payload: dict[str, Any] = {
+        "status": status,
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if message:
+        payload["message"] = message[:1000]
+    requests.patch(
+        f"{SUPABASE_URL}/rest/v1/scrape_run_steps?id=eq.{step_id}",
+        headers=_headers(),
+        json=payload,
+        timeout=20,
+    ).raise_for_status()

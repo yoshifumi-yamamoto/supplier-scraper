@@ -3,6 +3,7 @@ import subprocess
 from pathlib import Path
 
 from scrapers.common.models import ScrapeStatus
+from scrapers.common.run_store import finish_step, start_step
 
 FAIL_PATTERNS = (
     "エラーが発生しました",
@@ -27,30 +28,41 @@ def run_pipeline(run_id: str) -> dict:
             "message": f"legacy dir not found: {legacy_dir}",
         }
 
-    result = subprocess.run(
-        ["python3", "main.py"],
-        cwd=str(legacy_dir),
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    combined_output = f"{result.stdout}\n{result.stderr}".strip()
-
-    if result.returncode != 0:
-        return {
-            "run_id": run_id,
-            "site": "yahoofleama",
-            "status": ScrapeStatus.ERROR.value,
-            "message": "legacy pipeline failed (non-zero exit)",
-        }
-
-    if any(pattern in combined_output for pattern in FAIL_PATTERNS):
-        return {
-            "run_id": run_id,
-            "site": "yahoofleama",
-            "status": ScrapeStatus.ERROR.value,
-            "message": "legacy pipeline failed (error pattern detected)",
-        }
+    scripts = [
+        "fetch_urls.py",
+        "split_urls.py",
+        "scrape_status.py",
+        "summarize_results.py",
+        "upload_to_supabase.py",
+        "delete_temp_data.py",
+    ]
+    for script in scripts:
+        step_id = start_step(run_id=run_id, step_name=script)
+        result = subprocess.run(
+            ["python3", script],
+            cwd=str(legacy_dir),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        combined_output = f"{result.stdout}\n{result.stderr}".strip()
+        if result.returncode != 0:
+            finish_step(step_id, status="failed", message="non-zero exit")
+            return {
+                "run_id": run_id,
+                "site": "yahoofleama",
+                "status": ScrapeStatus.ERROR.value,
+                "message": f"{script} failed (non-zero exit)",
+            }
+        if any(pattern in combined_output for pattern in FAIL_PATTERNS):
+            finish_step(step_id, status="failed", message="error pattern detected")
+            return {
+                "run_id": run_id,
+                "site": "yahoofleama",
+                "status": ScrapeStatus.ERROR.value,
+                "message": f"{script} failed (error pattern detected)",
+            }
+        finish_step(step_id, status="success")
 
     return {
         "run_id": run_id,
