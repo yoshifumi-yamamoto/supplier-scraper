@@ -24,26 +24,26 @@ def fetch_data_from_supabase():
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Range-Unit": "items",
     }
 
     all_data = []
     page = 0
+    last_item_id = None
 
     while True:
         if MAX_PAGES > 0 and page >= MAX_PAGES:
             print(f"[INFO] MAX_PAGES={MAX_PAGES} に到達したため取得を打ち切ります")
             break
 
-        from_idx = page * PAGE_SIZE
-        to_idx = from_idx + PAGE_SIZE - 1
-        headers["Range"] = f"{from_idx}-{to_idx}"
-
         params = {
             "select": "ebay_item_id,ebay_user_id,stocking_url,listing_status",
             "listing_status": "eq.Active",
-            "stocking_url": "not.is.null",
+            "stocking_url": "ilike.*paypayfleamarket.yahoo.co.jp*",
+            "order": "ebay_item_id.asc",
+            "limit": str(PAGE_SIZE),
         }
+        if last_item_id:
+            params["ebay_item_id"] = f"gt.{last_item_id}"
 
         data = None
         for attempt in range(FETCH_MAX_RETRIES):
@@ -52,7 +52,7 @@ def fetch_data_from_supabase():
                 if response.status_code >= 500:
                     body_preview = response.text[:300].replace("\n", " ")
                     raise requests.HTTPError(
-                        f"Supabase {response.status_code} on range {from_idx}-{to_idx}: {body_preview}",
+                        f"Supabase {response.status_code} on page {page + 1}: {body_preview}",
                         response=response,
                     )
                 response.raise_for_status()
@@ -64,7 +64,7 @@ def fetch_data_from_supabase():
                 sleep_sec = FETCH_BACKOFF_BASE * (2 ** attempt)
                 print(
                     f"[WARN] fetch retry {attempt + 1}/{FETCH_MAX_RETRIES} failed "
-                    f"(range={from_idx}-{to_idx}): {e} / sleep={sleep_sec:.1f}s"
+                    f"(page={page + 1}): {e} / sleep={sleep_sec:.1f}s"
                 )
                 time.sleep(sleep_sec)
 
@@ -72,7 +72,8 @@ def fetch_data_from_supabase():
             break
 
         all_data.extend(data)
-        print(f"[DEBUG] {from_idx}〜{to_idx}件を取得（累計: {len(all_data)}件）")
+        last_item_id = data[-1]["ebay_item_id"]
+        print(f"[DEBUG] page={page + 1} 取得={len(data)}件（累計: {len(all_data)}件）")
 
         if len(data) < PAGE_SIZE:
             break

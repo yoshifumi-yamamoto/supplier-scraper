@@ -15,6 +15,7 @@ uvicorn apps.dashboard_api.main:app --reload --host 0.0.0.0 --port 8080
 Supabase SQL Editor で次を順に実行:
 - `infra/sql/001_create_scrape_runs.sql`
 - `infra/sql/002_create_scrape_run_steps.sql`
+- `infra/sql/003_optimize_items_fetch.sql`
 
 ## 2) Web起動 (Next.js)
 ```bash
