@@ -31,6 +31,10 @@ cd /Users/yamamotoyoshifumi/projects/ebay/supplier-scraper-main
 export RUN_LOCK_DIR=/tmp
 # 任意: Linuxサーバーで stale chrome/chromedriver を掃除する場合のみ有効化
 export RUNNER_PROCESS_CLEANUP=true
+# 任意: 異常時にChatwork通知
+export CHATWORK_NOTIFY_ENABLED=true
+export CHATWORK_API_TOKEN="<chatwork_api_token>"
+export CHATWORK_ROOM_ID="<chatwork_room_id>"
 PYTHONPATH=. python3 apps/runner/main.py --site yahoofleama
 PYTHONPATH=. python3 apps/runner/main.py --site secondstreet
 ```
