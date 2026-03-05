@@ -47,20 +47,24 @@ def run_pipeline(run_id: str) -> dict:
         )
         combined_output = f"{result.stdout}\n{result.stderr}".strip()
         if result.returncode != 0:
-            finish_step(step_id, status="failed", message="non-zero exit")
+            detail = (combined_output[:400] or "non-zero exit").replace("
+", " | ")
+            finish_step(step_id, status="failed", message=detail)
             return {
                 "run_id": run_id,
                 "site": "yahoofleama",
                 "status": ScrapeStatus.ERROR.value,
-                "message": f"{script} failed (non-zero exit)",
+                "message": f"{script} failed (non-zero exit): {detail}",
             }
         if any(pattern in combined_output for pattern in FAIL_PATTERNS):
-            finish_step(step_id, status="failed", message="error pattern detected")
+            detail = (combined_output[:400] or "error pattern detected").replace("
+", " | ")
+            finish_step(step_id, status="failed", message=detail)
             return {
                 "run_id": run_id,
                 "site": "yahoofleama",
                 "status": ScrapeStatus.ERROR.value,
-                "message": f"{script} failed (error pattern detected)",
+                "message": f"{script} failed (error pattern): {detail}",
             }
         finish_step(step_id, status="success")
 
