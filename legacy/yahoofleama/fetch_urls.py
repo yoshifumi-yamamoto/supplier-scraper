@@ -1,7 +1,10 @@
-import requests
 import csv
 import os
+import sys
+import time
 from datetime import datetime
+
+import requests
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -10,10 +13,10 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 TABLE_NAME = "items"
 
-headers = {
-    "apikey": SUPABASE_KEY,
-    "Authorization": f"Bearer {SUPABASE_KEY}",
-}
+PAGE_SIZE = int(os.getenv("SUPABASE_PAGE_SIZE", 1000))
+FETCH_MAX_RETRIES = int(os.getenv("FETCH_MAX_RETRIES", 4))
+FETCH_BACKOFF_BASE = float(os.getenv("FETCH_BACKOFF_BASE", 2.0))
+
 
 def fetch_data_from_supabase():
     url = f"{SUPABASE_URL}/rest/v1/{TABLE_NAME}"
@@ -24,14 +27,12 @@ def fetch_data_from_supabase():
     }
 
     all_data = []
-    page_size = 1000
     page = 0
 
     while True:
-        from_idx = page * page_size
-        to_idx = from_idx + page_size - 1
-        range_header = f"{from_idx}-{to_idx}"
-        headers["Range"] = range_header
+        from_idx = page * PAGE_SIZE
+        to_idx = from_idx + PAGE_SIZE - 1
+        headers["Range"] = f"{from_idx}-{to_idx}"
 
         params = {
             "select": "ebay_item_id,ebay_user_id,stocking_url,listing_status",
@@ -39,9 +40,28 @@ def fetch_data_from_supabase():
             "stocking_url": "not.is.null",
         }
 
-        response = requests.get(url, headers=headers, params=params)
-        response.raise_for_status()
-        data = response.json()
+        data = None
+        for attempt in range(FETCH_MAX_RETRIES):
+            try:
+                response = requests.get(url, headers=headers, params=params, timeout=45)
+                if response.status_code >= 500:
+                    body_preview = response.text[:300].replace("\n", " ")
+                    raise requests.HTTPError(
+                        f"Supabase {response.status_code} on range {from_idx}-{to_idx}: {body_preview}",
+                        response=response,
+                    )
+                response.raise_for_status()
+                data = response.json()
+                break
+            except Exception as e:  # noqa: BLE001
+                if attempt == FETCH_MAX_RETRIES - 1:
+                    raise
+                sleep_sec = FETCH_BACKOFF_BASE * (2 ** attempt)
+                print(
+                    f"[WARN] fetch retry {attempt + 1}/{FETCH_MAX_RETRIES} failed "
+                    f"(range={from_idx}-{to_idx}): {e} / sleep={sleep_sec:.1f}s"
+                )
+                time.sleep(sleep_sec)
 
         if not data:
             break
@@ -49,18 +69,16 @@ def fetch_data_from_supabase():
         all_data.extend(data)
         print(f"[DEBUG] {from_idx}〜{to_idx}件を取得（累計: {len(all_data)}件）")
 
-        if len(data) < page_size:
+        if len(data) < PAGE_SIZE:
             break
 
         page += 1
 
     return all_data
 
+
 # ヤフーフリマ URLだけ抽出してCSV保存
 def save_filtered_csv(data):
-    # 🔽 テスト用に ebay_user_id=japangolfhub のみ対象（後で消してOK！）
-    # data = [row for row in data if row["ebay_user_id"] == "japangolfhub"]
-
     filtered = [row for row in data if "paypayfleamarket.yahoo.co.jp" in row["stocking_url"]]
 
     os.makedirs("input", exist_ok=True)
@@ -68,15 +86,24 @@ def save_filtered_csv(data):
     file_path = f"input/yahoofleama_urls_{timestamp}.csv"
 
     with open(file_path, mode="w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=[
-            "ebay_item_id", "ebay_user_id", "stocking_url", "listing_status", "stock_status_checked", "scraped_stock_status"
-        ])
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "ebay_item_id",
+                "ebay_user_id",
+                "stocking_url",
+                "listing_status",
+                "stock_status_checked",
+                "scraped_stock_status",
+            ],
+        )
         writer.writeheader()
         for row in filtered:
             row["stock_status_checked"] = ""
             writer.writerow(row)
 
     print(f"{len(filtered)} 件のURLを {file_path} に保存しました。")
+
 
 if __name__ == "__main__":
     try:
@@ -86,8 +113,9 @@ if __name__ == "__main__":
         if data:
             print(f"[DEBUG] 先頭データの中身: {data[0]}")
         else:
-            print(f"[DEBUG] データは0件でした")
+            print("[DEBUG] データは0件でした")
 
         save_filtered_csv(data)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         print(f"エラーが発生しました: {e}")
+        sys.exit(1)
