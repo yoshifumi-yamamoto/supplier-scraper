@@ -1,4 +1,5 @@
 import os
+import subprocess
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -320,6 +321,36 @@ def system_memory() -> dict:
             "percent": sm.percent,
         },
     }
+
+
+@app.get("/api/system/schedule")
+def system_schedule() -> dict:
+    try:
+        proc = subprocess.run(
+            ["crontab", "-l"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        raw = proc.stdout if proc.returncode == 0 else ""
+        lines = [ln.strip() for ln in raw.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+        items: list[dict[str, str]] = []
+        for ln in lines:
+            parts = ln.split(maxsplit=5)
+            if len(parts) < 6:
+                continue
+            schedule = " ".join(parts[:5])
+            command = parts[5]
+            if (
+                "run_all_scrapes.sh" in command
+                or "mcp_watchdog.sh" in command
+                or "mcp_run_site.sh" in command
+            ):
+                items.append({"schedule": schedule, "command": command})
+        return {"timezone": "Asia/Tokyo", "items": items}
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(status_code=500, content={"error": "schedule_fetch_failed", "message": str(exc)})
 
 
 @app.get("/api/mcp/summary")

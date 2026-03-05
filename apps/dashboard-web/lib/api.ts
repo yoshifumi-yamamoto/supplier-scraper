@@ -42,6 +42,11 @@ export type MCPSummary = {
   };
 };
 
+export type SystemSchedule = {
+  timezone: string;
+  items: { schedule: string; command: string }[];
+};
+
 const API_BASE = process.env.NEXT_PUBLIC_DASHBOARD_API_BASE ?? "http://127.0.0.1:8080";
 
 export async function fetchOverview(): Promise<Overview> {
@@ -83,6 +88,17 @@ export async function fetchMCPSummary(): Promise<MCPSummary> {
   };
   try {
     const res = await fetch(`${API_BASE}/api/mcp/summary`, { cache: "no-store" });
+    if (!res.ok) return fallback;
+    return res.json();
+  } catch {
+    return fallback;
+  }
+}
+
+export async function fetchSystemSchedule(): Promise<SystemSchedule> {
+  const fallback: SystemSchedule = { timezone: "Asia/Tokyo", items: [] };
+  try {
+    const res = await fetch(`${API_BASE}/api/system/schedule`, { cache: "no-store" });
     if (!res.ok) return fallback;
     return res.json();
   } catch {

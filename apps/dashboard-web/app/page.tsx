@@ -1,4 +1,4 @@
-import { fetchMCPSummary, fetchOverview, fetchSystemMemory } from "@/lib/api";
+import { fetchMCPSummary, fetchOverview, fetchSystemMemory, fetchSystemSchedule } from "@/lib/api";
 
 function statusClass(status: string) {
   return status === "success" ? "badge badge-ok" : "badge badge-ng";
@@ -8,6 +8,7 @@ export default async function Page() {
   const overview = await fetchOverview();
   const systemMemory = await fetchSystemMemory();
   const mcp = await fetchMCPSummary();
+  const schedule = await fetchSystemSchedule();
 
   return (
     <main className="container">
@@ -87,6 +88,30 @@ export default async function Page() {
               <tr key={`${row.message}-${row.count}`}>
                 <td>{row.message}</td>
                 <td>{row.count}</td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+
+      <h2 className="section-title">Schedule</h2>
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Cron</th>
+            <th>Command</th>
+          </tr>
+        </thead>
+        <tbody>
+          {schedule.items.length === 0 ? (
+            <tr>
+              <td colSpan={2}>No schedule found</td>
+            </tr>
+          ) : (
+            schedule.items.map((row) => (
+              <tr key={`${row.schedule}-${row.command}`}>
+                <td>{row.schedule}</td>
+                <td>{row.command}</td>
               </tr>
             ))
           )}
