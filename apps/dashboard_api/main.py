@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 import requests
+import psutil
 
 app = FastAPI(title="Supplier Scraper Dashboard API")
 
@@ -283,3 +284,23 @@ def errors() -> dict:
         return {"items": out, "source": "supabase_items_derived"}
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(status_code=500, content={"error": "errors_fetch_failed", "message": str(exc)})
+
+
+@app.get("/api/system/memory")
+def system_memory() -> dict:
+    vm = psutil.virtual_memory()
+    sm = psutil.swap_memory()
+    return {
+        "memory": {
+            "total_mb": round(vm.total / 1024 / 1024, 2),
+            "used_mb": round(vm.used / 1024 / 1024, 2),
+            "available_mb": round(vm.available / 1024 / 1024, 2),
+            "percent": vm.percent,
+        },
+        "swap": {
+            "total_mb": round(sm.total / 1024 / 1024, 2),
+            "used_mb": round(sm.used / 1024 / 1024, 2),
+            "free_mb": round(sm.free / 1024 / 1024, 2),
+            "percent": sm.percent,
+        },
+    }

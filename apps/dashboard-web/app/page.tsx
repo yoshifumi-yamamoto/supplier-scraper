@@ -1,4 +1,4 @@
-import { fetchOverview } from "@/lib/api";
+import { fetchOverview, fetchSystemMemory } from "@/lib/api";
 
 function statusClass(status: string) {
   return status === "success" ? "badge badge-ok" : "badge badge-ng";
@@ -6,6 +6,7 @@ function statusClass(status: string) {
 
 export default async function Page() {
   const overview = await fetchOverview();
+  const systemMemory = await fetchSystemMemory();
 
   return (
     <main className="container">
@@ -24,6 +25,18 @@ export default async function Page() {
         <div className="card">
           <div className="label">Tracked Sites</div>
           <div className="value">{overview.sites.length}</div>
+        </div>
+        <div className="card">
+          <div className="label">Memory Used</div>
+          <div className="value">{systemMemory.memory.percent}%</div>
+        </div>
+        <div className="card">
+          <div className="label">Memory Available</div>
+          <div className="value">{Math.round(systemMemory.memory.available_mb)}MB</div>
+        </div>
+        <div className="card">
+          <div className="label">Swap Used</div>
+          <div className="value">{systemMemory.swap.percent}%</div>
         </div>
       </section>
 
