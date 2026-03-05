@@ -22,5 +22,9 @@
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`（または `SUPABASE_KEY`）
 
+先に作成するテーブル:
+- `infra/sql/001_create_scrape_runs.sql`
+- `infra/sql/002_create_scrape_run_steps.sql`
+
 ## 起動
 - `docs/bootstrap.md` を参照

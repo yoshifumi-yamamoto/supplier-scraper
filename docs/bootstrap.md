@@ -11,6 +11,11 @@ export SUPABASE_SERVICE_ROLE_KEY="<service_role_key>"
 uvicorn apps.dashboard_api.main:app --reload --host 0.0.0.0 --port 8080
 ```
 
+### 1-1) 先に作成するテーブル
+Supabase SQL Editor で次を順に実行:
+- `infra/sql/001_create_scrape_runs.sql`
+- `infra/sql/002_create_scrape_run_steps.sql`
+
 ## 2) Web起動 (Next.js)
 ```bash
 cd /Users/yamamotoyoshifumi/projects/ebay/supplier-scraper-main/apps/dashboard-web

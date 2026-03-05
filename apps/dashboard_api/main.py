@@ -13,6 +13,7 @@ JST = timezone(timedelta(hours=9))
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY", "")
 ITEMS_TABLE = os.getenv("ITEMS_TABLE", "items")
+RUNS_TABLE = os.getenv("RUNS_TABLE", "scrape_runs")
 
 
 def _site_from_url(url: str | None) -> str:
@@ -68,6 +69,26 @@ def _fetch_items(limit: int = 5000) -> list[dict[str, Any]]:
     return data if isinstance(data, list) else []
 
 
+def _fetch_runs(limit: int = 200) -> list[dict[str, Any]]:
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return []
+    url = f"{SUPABASE_URL}/rest/v1/{RUNS_TABLE}"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+    }
+    params = {
+        "select": "id,site,status,trigger_type,started_at,finished_at,error_summary",
+        "order": "started_at.desc",
+        "limit": str(limit),
+    }
+    res = requests.get(url, headers=headers, params=params, timeout=30)
+    if res.status_code >= 400:
+        return []
+    data = res.json()
+    return data if isinstance(data, list) else []
+
+
 @app.get('/health')
 def health() -> dict:
     return {"ok": True}
@@ -76,6 +97,32 @@ def health() -> dict:
 @app.get('/api/overview')
 def overview() -> dict:
     try:
+        runs_data = _fetch_runs(limit=500)
+        if runs_data:
+            now_jst = datetime.now(JST).date()
+            latest_by_site: dict[str, dict[str, Any]] = {}
+            today_runs = 0
+            today_failures = 0
+            for run in runs_data:
+                site = run.get("site") or "unknown"
+                started_at = run.get("started_at")
+                status = "success" if run.get("status") == "success" else "error"
+                if started_at:
+                    dt = datetime.fromisoformat(started_at.replace("Z", "+00:00")).astimezone(JST)
+                    if dt.date() == now_jst:
+                        today_runs += 1
+                        if status == "error":
+                            today_failures += 1
+                prev = latest_by_site.get(site)
+                if not prev or (started_at and started_at > (prev.get("last_run") or "")):
+                    latest_by_site[site] = {"site": site, "latest_status": status, "last_run": started_at}
+            return {
+                "sites": sorted(latest_by_site.values(), key=lambda x: x["site"]),
+                "today_runs": today_runs,
+                "today_failures": today_failures,
+                "source": "supabase_scrape_runs",
+            }
+
         items = _fetch_items()
         if not items:
             return {
@@ -128,6 +175,23 @@ def overview() -> dict:
 @app.get("/api/runs")
 def runs() -> dict:
     try:
+        runs_data = _fetch_runs(limit=200)
+        if runs_data:
+            out = [
+                {
+                    "run_id": row.get("id"),
+                    "site": row.get("site"),
+                    "status": "success" if row.get("status") == "success" else "error",
+                    "started_at": row.get("started_at"),
+                    "finished_at": row.get("finished_at"),
+                    "items": None,
+                    "errors": 1 if row.get("status") == "failed" else 0,
+                    "error_summary": row.get("error_summary"),
+                }
+                for row in runs_data
+            ]
+            return {"items": out, "source": "supabase_scrape_runs"}
+
         items = _fetch_items(limit=1000)
         buckets: dict[str, dict[str, Any]] = {}
         for row in items:
@@ -166,6 +230,32 @@ def runs() -> dict:
 @app.get("/api/errors")
 def errors() -> dict:
     try:
+        runs_data = _fetch_runs(limit=500)
+        if runs_data:
+            counter: Counter[tuple[str, str]] = Counter()
+            latest_seen: dict[tuple[str, str], str] = {}
+            for row in runs_data:
+                if row.get("status") != "failed":
+                    continue
+                site = row.get("site") or "unknown"
+                error_type = "pipeline_failed"
+                key = (site, error_type)
+                counter[key] += 1
+                ts = row.get("finished_at") or row.get("started_at")
+                if ts and (key not in latest_seen or ts > latest_seen[key]):
+                    latest_seen[key] = ts
+            out = [
+                {
+                    "site": site,
+                    "error_type": error_type,
+                    "count": count,
+                    "latest_seen": latest_seen.get((site, error_type)),
+                }
+                for (site, error_type), count in counter.items()
+            ]
+            out.sort(key=lambda x: x["count"], reverse=True)
+            return {"items": out, "source": "supabase_scrape_runs"}
+
         items = _fetch_items(limit=5000)
         counter: Counter[tuple[str, str]] = Counter()
         latest_seen: dict[tuple[str, str], str] = {}
