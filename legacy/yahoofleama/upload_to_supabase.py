@@ -3,6 +3,7 @@ import glob
 import csv
 import requests
 import logging
+import sys
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
@@ -74,6 +75,8 @@ def update_stock_to_supabase(folder_path):
                     success_count += 1
 
     logging.info(f"📊 更新完了: 成功 {success_count} 件 / 失敗 {fail_count} 件")
+    if fail_count > 0:
+        raise RuntimeError(f"Supabase更新失敗: {fail_count}件")
 
 if __name__ == "__main__":
     try:
@@ -85,3 +88,4 @@ if __name__ == "__main__":
         logging.info("🎉 Supabaseへの更新が完了しました。")
     except Exception as e:
         logging.exception(f"🚨 処理中にエラー発生: {e}")
+        sys.exit(1)
