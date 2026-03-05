@@ -47,8 +47,7 @@ def run_pipeline(run_id: str) -> dict:
         )
         combined_output = f"{result.stdout}\n{result.stderr}".strip()
         if result.returncode != 0:
-            detail = (combined_output[:400] or "non-zero exit").replace("
-", " | ")
+            detail = (combined_output[:400] or "non-zero exit").replace("\n", " | ")
             finish_step(step_id, status="failed", message=detail)
             return {
                 "run_id": run_id,
@@ -57,8 +56,7 @@ def run_pipeline(run_id: str) -> dict:
                 "message": f"{script} failed (non-zero exit): {detail}",
             }
         if any(pattern in combined_output for pattern in FAIL_PATTERNS):
-            detail = (combined_output[:400] or "error pattern detected").replace("
-", " | ")
+            detail = (combined_output[:400] or "error pattern detected").replace("\n", " | ")
             finish_step(step_id, status="failed", message=detail)
             return {
                 "run_id": run_id,
