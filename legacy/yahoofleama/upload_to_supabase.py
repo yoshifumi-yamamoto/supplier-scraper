@@ -40,13 +40,18 @@ headers = {
 def get_latest_summary_folder():
     subfolders = [f for f in glob.glob(os.path.join(SUMMARY_FOLDER, "*")) if os.path.isdir(f)]
     if not subfolders:
-        raise FileNotFoundError("summarized フォルダが見つかりません。")
+        return None
     return max(subfolders, key=os.path.getmtime)
 
 def update_stock_to_supabase(folder_path):
+    if not folder_path:
+        logging.warning("⚠️ summarized フォルダがないため、今回の更新はスキップします。")
+        return
+
     files = glob.glob(os.path.join(folder_path, "*.csv"))
     if not files:
-        raise FileNotFoundError(f"{folder_path} にCSVが見つかりません。")
+        logging.warning(f"⚠️ {folder_path} にCSVがないため、今回の更新はスキップします。")
+        return
 
     success_count = 0
     fail_count = 0
@@ -82,7 +87,8 @@ if __name__ == "__main__":
     try:
         logging.info("🔍 summarizedフォルダを探索中...")
         folder = get_latest_summary_folder()
-        logging.info(f"📂 最新フォルダ: {folder}")
+        if folder:
+            logging.info(f"📂 最新フォルダ: {folder}")
 
         update_stock_to_supabase(folder)
         logging.info("🎉 Supabaseへの更新が完了しました。")
