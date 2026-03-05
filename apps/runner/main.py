@@ -1,4 +1,5 @@
 import argparse
+import os
 import uuid
 
 from scrapers.common.execution_guard import (
@@ -25,7 +26,7 @@ def main() -> int:
     args = parser.parse_args()
 
     lock = None
-    run_id = str(uuid.uuid4())
+    run_id = os.getenv("RUN_ID") or str(uuid.uuid4())
     try:
         lock = acquire_run_lock(args.site)
     except LockBusyError as exc:
