@@ -1,4 +1,4 @@
-import { fetchOverview, fetchSystemMemory } from "@/lib/api";
+import { fetchMCPSummary, fetchOverview, fetchSystemMemory } from "@/lib/api";
 
 function statusClass(status: string) {
   return status === "success" ? "badge badge-ok" : "badge badge-ng";
@@ -7,6 +7,7 @@ function statusClass(status: string) {
 export default async function Page() {
   const overview = await fetchOverview();
   const systemMemory = await fetchSystemMemory();
+  const mcp = await fetchMCPSummary();
 
   return (
     <main className="container">
@@ -39,6 +40,58 @@ export default async function Page() {
           <div className="value">{systemMemory.swap.percent}%</div>
         </div>
       </section>
+
+      <h2 className="section-title">Operations</h2>
+      <section className="grid">
+        <div className="card">
+          <div className="label">MCP Success (24h)</div>
+          <div className="value">{mcp.kpis.success_24h}</div>
+        </div>
+        <div className="card">
+          <div className="label">MCP Failed (24h)</div>
+          <div className="value">{mcp.kpis.failed_24h}</div>
+        </div>
+        <div className="card">
+          <div className="label">MCP Running</div>
+          <div className="value">{mcp.kpis.running_runs}</div>
+        </div>
+        <div className="card">
+          <div className="label">Server CPU</div>
+          <div className="value">{mcp.server.cpu_percent}%</div>
+        </div>
+        <div className="card">
+          <div className="label">Chrome Processes</div>
+          <div className="value">{mcp.server.chrome_processes}</div>
+        </div>
+        <div className="card">
+          <div className="label">Runner Processes</div>
+          <div className="value">{mcp.server.runner_processes}</div>
+        </div>
+      </section>
+
+      <h2 className="section-title">Top Errors</h2>
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Message</th>
+            <th>Count</th>
+          </tr>
+        </thead>
+        <tbody>
+          {mcp.top_errors.length === 0 ? (
+            <tr>
+              <td colSpan={2}>No recent errors</td>
+            </tr>
+          ) : (
+            mcp.top_errors.map((row) => (
+              <tr key={`${row.message}-${row.count}`}>
+                <td>{row.message}</td>
+                <td>{row.count}</td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
 
       <h2 className="section-title">Latest Site Status</h2>
       <table className="table">

@@ -90,6 +90,22 @@ def _fetch_runs(limit: int = 200) -> list[dict[str, Any]]:
     return data if isinstance(data, list) else []
 
 
+def _process_counts() -> dict[str, int]:
+    chrome = 0
+    runner = 0
+    for proc in psutil.process_iter(["name", "cmdline"]):
+        try:
+            name = (proc.info.get("name") or "").lower()
+            cmd = " ".join(proc.info.get("cmdline") or []).lower()
+            if "chrome" in name or "chromedriver" in name:
+                chrome += 1
+            if "apps/runner/main.py" in cmd or "scrape_status.py" in cmd:
+                runner += 1
+        except Exception:  # noqa: BLE001
+            continue
+    return {"chrome_processes": chrome, "runner_processes": runner}
+
+
 @app.get('/health')
 def health() -> dict:
     return {"ok": True}
@@ -304,3 +320,70 @@ def system_memory() -> dict:
             "percent": sm.percent,
         },
     }
+
+
+@app.get("/api/mcp/summary")
+def mcp_summary() -> dict:
+    try:
+        runs_data = _fetch_runs(limit=500)
+        now_utc = datetime.now(timezone.utc)
+        since_24h = now_utc - timedelta(hours=24)
+        success_24h = 0
+        failed_24h = 0
+        running = 0
+        latest_by_site: dict[str, dict[str, Any]] = {}
+        error_counter: Counter[str] = Counter()
+
+        for row in runs_data:
+            site = row.get("site") or "unknown"
+            status = row.get("status") or "unknown"
+            started_at = row.get("started_at")
+            finished_at = row.get("finished_at")
+            error_summary = row.get("error_summary") or ""
+
+            ts = None
+            if started_at:
+                ts = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                if ts >= since_24h:
+                    if status == "success":
+                        success_24h += 1
+                    elif status == "failed":
+                        failed_24h += 1
+
+            if status == "running":
+                running += 1
+
+            prev = latest_by_site.get(site)
+            if not prev or ((started_at or "") > (prev.get("started_at") or "")):
+                latest_by_site[site] = {
+                    "site": site,
+                    "status": status,
+                    "started_at": started_at,
+                    "finished_at": finished_at,
+                    "error_summary": error_summary,
+                }
+
+            if status == "failed":
+                key = error_summary[:120] if error_summary else "failed_without_summary"
+                error_counter[key] += 1
+
+        proc = _process_counts()
+        vm = psutil.virtual_memory()
+        return {
+            "kpis": {
+                "success_24h": success_24h,
+                "failed_24h": failed_24h,
+                "running_runs": running,
+                "sites_tracked": len(latest_by_site),
+            },
+            "latest_by_site": sorted(latest_by_site.values(), key=lambda x: x["site"]),
+            "top_errors": [{"message": m, "count": c} for m, c in error_counter.most_common(5)],
+            "server": {
+                "cpu_percent": psutil.cpu_percent(interval=0.2),
+                "memory_percent": vm.percent,
+                "chrome_processes": proc["chrome_processes"],
+                "runner_processes": proc["runner_processes"],
+            },
+        }
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(status_code=500, content={"error": "mcp_summary_failed", "message": str(exc)})
