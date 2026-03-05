@@ -27,5 +27,9 @@ NEXT_PUBLIC_DASHBOARD_API_BASE=http://127.0.0.1:8080 npm run dev
 ## 3) Runner実行
 ```bash
 cd /Users/yamamotoyoshifumi/projects/ebay/supplier-scraper-main
+# 任意: 二重起動防止ロック配置先（default: /tmp）
+export RUN_LOCK_DIR=/tmp
+# 任意: Linuxサーバーで stale chrome/chromedriver を掃除する場合のみ有効化
+export RUNNER_PROCESS_CLEANUP=true
 PYTHONPATH=. python3 apps/runner/main.py --site yahoofleama
 ```

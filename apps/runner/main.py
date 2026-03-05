@@ -1,6 +1,12 @@
 import argparse
 import uuid
 
+from scrapers.common.execution_guard import (
+    LockBusyError,
+    acquire_run_lock,
+    cleanup_site_processes,
+    release_run_lock,
+)
 from scrapers.common.logging_utils import json_log
 from scrapers.common.run_store import create_run, finish_run
 from scrapers.sites.yahoofleama.adapter import run_pipeline as run_yahoofleama
@@ -11,11 +17,22 @@ def main() -> int:
     parser.add_argument("--site", required=True, choices=["yahoofleama"], help="target site")
     args = parser.parse_args()
 
+    lock = None
     run_id = str(uuid.uuid4())
+    try:
+        lock = acquire_run_lock(args.site)
+    except LockBusyError as exc:
+        json_log("warning", "skip run: lock busy", site=args.site, error=str(exc))
+        return 2
+
     json_log("info", "run started", run_id=run_id, site=args.site)
-    create_run(run_id=run_id, site=args.site, trigger_type="manual")
+    try:
+        create_run(run_id=run_id, site=args.site, trigger_type="manual")
+    except Exception as exc:  # noqa: BLE001
+        json_log("warning", "create_run failed, continue run", run_id=run_id, site=args.site, error=str(exc))
 
     try:
+        cleanup_site_processes(args.site)
         if args.site == "yahoofleama":
             result = run_yahoofleama(run_id)
         else:
@@ -28,13 +45,23 @@ def main() -> int:
             json_log("info", "run finished", **result)
 
         status = "success" if result.get("status") != "error" else "failed"
-        finish_run(run_id=run_id, status=status, error_summary=None if status == "success" else result_message)
+        try:
+            finish_run(run_id=run_id, status=status, error_summary=None if status == "success" else result_message)
+        except Exception as exc:  # noqa: BLE001
+            json_log("warning", "finish_run failed", run_id=run_id, site=args.site, error=str(exc))
+        cleanup_site_processes(args.site)
         return 0 if status == "success" else 1
     except Exception as exc:  # noqa: BLE001
         msg = str(exc)
         json_log("error", "run failed", run_id=run_id, site=args.site, error=msg)
-        finish_run(run_id=run_id, status="failed", error_summary=msg)
+        try:
+            finish_run(run_id=run_id, status="failed", error_summary=msg)
+        except Exception as finish_exc:  # noqa: BLE001
+            json_log("warning", "finish_run failed", run_id=run_id, site=args.site, error=str(finish_exc))
+        cleanup_site_processes(args.site)
         return 1
+    finally:
+        release_run_lock(lock)
 
 
 if __name__ == "__main__":
