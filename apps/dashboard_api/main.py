@@ -343,8 +343,11 @@ def mcp_summary() -> dict:
 
             ts = None
             if started_at:
-                ts = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
-                if ts >= since_24h:
+                try:
+                    ts = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                except ValueError:
+                    ts = None
+                if ts and ts >= since_24h:
                     if status == "success":
                         success_24h += 1
                     elif status == "failed":
