@@ -8,3 +8,6 @@ legacy/*/split/
 legacy/*/scraped/
 legacy/*/summarized/
 legacy/*/logs/
+legacy/*/tmp_chrome/
+apps/dashboard-web/.next/
+apps/dashboard-web/node_modules/
