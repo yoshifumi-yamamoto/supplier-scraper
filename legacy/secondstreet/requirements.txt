@@ -1,0 +1,6 @@
+requests
+python-dotenv
+selenium
+pydrive2
+psutil
+dotenv

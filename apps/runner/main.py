@@ -9,12 +9,18 @@ from scrapers.common.execution_guard import (
 )
 from scrapers.common.logging_utils import json_log
 from scrapers.common.run_store import create_run, finish_run
+from scrapers.sites.secondstreet.adapter import run_pipeline as run_secondstreet
 from scrapers.sites.yahoofleama.adapter import run_pipeline as run_yahoofleama
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Unified supplier scraper runner")
-    parser.add_argument("--site", required=True, choices=["yahoofleama"], help="target site")
+    parser.add_argument(
+        "--site",
+        required=True,
+        choices=["yahoofleama", "secondstreet"],
+        help="target site",
+    )
     args = parser.parse_args()
 
     lock = None
@@ -35,6 +41,8 @@ def main() -> int:
         cleanup_site_processes(args.site)
         if args.site == "yahoofleama":
             result = run_yahoofleama(run_id)
+        elif args.site == "secondstreet":
+            result = run_secondstreet(run_id)
         else:
             raise ValueError(f"Unsupported site: {args.site}")
 

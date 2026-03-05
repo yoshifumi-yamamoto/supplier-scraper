@@ -32,4 +32,5 @@ export RUN_LOCK_DIR=/tmp
 # 任意: Linuxサーバーで stale chrome/chromedriver を掃除する場合のみ有効化
 export RUNNER_PROCESS_CLEANUP=true
 PYTHONPATH=. python3 apps/runner/main.py --site yahoofleama
+PYTHONPATH=. python3 apps/runner/main.py --site secondstreet
 ```
