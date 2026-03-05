@@ -38,6 +38,22 @@ systemctl enable --now supplier-mcp.service
 systemctl status supplier-mcp.service
 ```
 
+## Cron (推奨: 既存バッチは維持しつつ追加)
+```cron
+# Legacy production batch
+0 0,12 * * * /bin/bash /root/run_all_scrapes.sh >> /var/log/run_all_scrapes.log 2>&1
+
+# MCP watchdog
+*/5 * * * * /bin/bash /root/supplier-scraper-main/scripts/mcp_watchdog.sh >> /var/log/supplier_mcp_watchdog.log 2>&1
+```
+
+## 手動実行ヘルパー
+```bash
+# site実行
+/bin/bash /root/supplier-scraper-main/scripts/mcp_run_site.sh yahoofleama
+/bin/bash /root/supplier-scraper-main/scripts/mcp_run_site.sh secondstreet 1
+```
+
 ## ツール一覧
 ```bash
 curl -sS http://127.0.0.1:8090/mcp/tools
