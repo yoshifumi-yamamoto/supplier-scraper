@@ -46,3 +46,10 @@ export CHATWORK_ROOM_ID="<chatwork_room_id>"
 PYTHONPATH=. python3 apps/runner/main.py --site yahoofleama
 PYTHONPATH=. python3 apps/runner/main.py --site secondstreet
 ```
+
+## 4) Validator Agent実行
+```bash
+cd /Users/yamamotoyoshifumi/projects/ebay/supplier-scraper-main
+. .venv/bin/activate
+PYTHONPATH=. python3 apps/validator_agent/main.py
+```
