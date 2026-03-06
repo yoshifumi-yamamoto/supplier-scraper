@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 from collections import Counter
@@ -16,6 +17,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY", "")
 ITEMS_TABLE = os.getenv("ITEMS_TABLE", "items")
 RUNS_TABLE = os.getenv("RUNS_TABLE", "scrape_runs")
+VALIDATOR_LOG_PATH = os.getenv("VALIDATOR_LOG_PATH", "/var/log/validator_agent.log")
 
 
 def _site_from_url(url: str | None) -> str:
@@ -421,3 +423,41 @@ def mcp_summary() -> dict:
         }
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(status_code=500, content={"error": "mcp_summary_failed", "message": str(exc)})
+
+
+@app.get("/api/validator/summary")
+def validator_summary() -> dict:
+    fallback = {
+        "checked_at": None,
+        "failed_recent": 0,
+        "retried_count": 0,
+        "skipped_count": 0,
+        "status": "unknown",
+    }
+    try:
+        if not os.path.exists(VALIDATOR_LOG_PATH):
+            return fallback
+        with open(VALIDATOR_LOG_PATH, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()[-300:]
+        for line in reversed(lines):
+            text = line.strip()
+            if not text:
+                continue
+            try:
+                row = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            if row.get("message") != "validator run finished":
+                continue
+            retried = row.get("retried") or []
+            skipped = row.get("skipped") or []
+            return {
+                "checked_at": row.get("checked_at"),
+                "failed_recent": int(row.get("failed_recent") or 0),
+                "retried_count": len(retried),
+                "skipped_count": len(skipped),
+                "status": "ok",
+            }
+        return fallback
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(status_code=500, content={"error": "validator_summary_failed", "message": str(exc)})

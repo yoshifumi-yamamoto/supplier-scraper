@@ -47,6 +47,14 @@ export type SystemSchedule = {
   items: { schedule: string; command: string }[];
 };
 
+export type ValidatorSummary = {
+  checked_at: string | null;
+  failed_recent: number;
+  retried_count: number;
+  skipped_count: number;
+  status: string;
+};
+
 const API_BASE = process.env.NEXT_PUBLIC_DASHBOARD_API_BASE ?? "http://127.0.0.1:8080";
 
 export async function fetchOverview(): Promise<Overview> {
@@ -99,6 +107,23 @@ export async function fetchSystemSchedule(): Promise<SystemSchedule> {
   const fallback: SystemSchedule = { timezone: "Asia/Tokyo", items: [] };
   try {
     const res = await fetch(`${API_BASE}/api/system/schedule`, { cache: "no-store" });
+    if (!res.ok) return fallback;
+    return res.json();
+  } catch {
+    return fallback;
+  }
+}
+
+export async function fetchValidatorSummary(): Promise<ValidatorSummary> {
+  const fallback: ValidatorSummary = {
+    checked_at: null,
+    failed_recent: 0,
+    retried_count: 0,
+    skipped_count: 0,
+    status: "unknown",
+  };
+  try {
+    const res = await fetch(`${API_BASE}/api/validator/summary`, { cache: "no-store" });
     if (!res.ok) return fallback;
     return res.json();
   } catch {

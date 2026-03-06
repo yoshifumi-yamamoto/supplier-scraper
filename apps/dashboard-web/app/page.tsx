@@ -1,4 +1,4 @@
-import { fetchMCPSummary, fetchOverview, fetchSystemMemory, fetchSystemSchedule } from "@/lib/api";
+import { fetchMCPSummary, fetchOverview, fetchSystemMemory, fetchSystemSchedule, fetchValidatorSummary } from "@/lib/api";
 
 function statusClass(status: string) {
   return status === "success" ? "badge badge-ok" : "badge badge-ng";
@@ -9,6 +9,7 @@ export default async function Page() {
   const systemMemory = await fetchSystemMemory();
   const mcp = await fetchMCPSummary();
   const schedule = await fetchSystemSchedule();
+  const validator = await fetchValidatorSummary();
 
   return (
     <main className="container">
@@ -67,6 +68,18 @@ export default async function Page() {
         <div className="card">
           <div className="label">Runner Processes</div>
           <div className="value">{mcp.server.runner_processes}</div>
+        </div>
+        <div className="card">
+          <div className="label">Validator Failed Recent</div>
+          <div className="value">{validator.failed_recent}</div>
+        </div>
+        <div className="card">
+          <div className="label">Validator Retried</div>
+          <div className="value">{validator.retried_count}</div>
+        </div>
+        <div className="card">
+          <div className="label">Validator Last Check</div>
+          <div className="value">{validator.checked_at ? validator.checked_at.slice(11, 19) : "-"}</div>
         </div>
       </section>
 
