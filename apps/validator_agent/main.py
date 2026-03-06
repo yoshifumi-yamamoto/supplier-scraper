@@ -16,6 +16,7 @@ LOOKBACK_MINUTES = int(os.getenv("VALIDATOR_LOOKBACK_MINUTES", "720"))
 ALLOWLIST = {s.strip() for s in os.getenv("VALIDATOR_SITE_ALLOWLIST", "yahoofleama,secondstreet").split(",") if s.strip()}
 AUTO_RETRY = os.getenv("VALIDATOR_AUTO_RETRY", "true").lower() == "true"
 RETRY_MAX_PAGES = int(os.getenv("VALIDATOR_RETRY_MAX_PAGES", "1"))
+STALE_RUNNING_MINUTES = int(os.getenv("VALIDATOR_STALE_RUNNING_MINUTES", "120"))
 
 TRANSIENT_PATTERNS = (
     "57014",
@@ -61,13 +62,46 @@ def _is_recent(ts: str | None, now_utc: datetime) -> bool:
     return dt >= now_utc - timedelta(minutes=LOOKBACK_MINUTES)
 
 
+def _parse_iso(ts: str | None) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def _is_transient(error_summary: str | None) -> bool:
     text = (error_summary or "").lower()
     return any(p in text for p in TRANSIENT_PATTERNS)
 
 
 def _site_running(runs: list[dict[str, Any]], site: str) -> bool:
-    return any((r.get("site") == site and r.get("status") == "running") for r in runs)
+    now = datetime.now(timezone.utc)
+    for r in runs:
+        if r.get("site") != site or r.get("status") != "running":
+            continue
+        started_at = _parse_iso(r.get("started_at"))
+        # Ignore stale running records; they are handled by stale cleanup below.
+        if started_at and started_at < now - timedelta(minutes=STALE_RUNNING_MINUTES):
+            continue
+        return True
+    return False
+
+
+def _mark_run_failed(run_id: str, error_summary: str) -> None:
+    payload = {
+        "status": "failed",
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "error_summary": error_summary[:1000],
+    }
+    requests.patch(
+        f"{SUPABASE_URL}/rest/v1/{RUNS_TABLE}?id=eq.{run_id}",
+        headers={**_headers(), "Content-Type": "application/json", "Prefer": "return=minimal"},
+        json=payload,
+        timeout=20,
+    ).raise_for_status()
 
 
 def _retry_site(site: str) -> dict[str, Any]:
@@ -83,12 +117,34 @@ def _retry_site(site: str) -> dict[str, Any]:
 def run_validator() -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     runs = _fetch_runs(limit=300)
+    stale_marked: list[dict[str, Any]] = []
+
+    for r in runs:
+        if r.get("status") != "running":
+            continue
+        dt = _parse_iso(r.get("started_at"))
+        if not dt:
+            continue
+        if dt >= now - timedelta(minutes=STALE_RUNNING_MINUTES):
+            continue
+        run_id = r.get("id")
+        site = r.get("site") or "unknown"
+        if not run_id:
+            continue
+        try:
+            _mark_run_failed(run_id, f"auto-marked failed by validator: stale running over {STALE_RUNNING_MINUTES}m")
+            stale_marked.append({"site": site, "run_id": run_id})
+        except Exception as exc:  # noqa: BLE001
+            json_log("warning", "failed to mark stale running", site=site, run_id=run_id, error=str(exc))
+
+    if stale_marked:
+        runs = _fetch_runs(limit=300)
 
     failed_recent = [
         r for r in runs
-        if r.get("status") == "failed"
-        and r.get("site") in ALLOWLIST
-        and _is_recent(r.get("started_at"), now)
+        if (r.get("status") in ("failed", "error"))
+        and ((not ALLOWLIST) or r.get("site") in ALLOWLIST)
+        and _is_recent(r.get("finished_at") or r.get("started_at"), now)
     ]
 
     retries: list[dict[str, Any]] = []
@@ -126,6 +182,7 @@ def run_validator() -> dict[str, Any]:
     report = {
         "checked_at": now.isoformat(),
         "lookback_minutes": LOOKBACK_MINUTES,
+        "stale_running_marked": stale_marked,
         "failed_recent": len(failed_recent),
         "retried": retries,
         "skipped": skipped,
