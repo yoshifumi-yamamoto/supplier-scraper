@@ -67,7 +67,8 @@ def update_stock_to_supabase(folder_path):
                 url = f"{SUPABASE_URL}/rest/v1/{TABLE_NAME}?ebay_item_id=eq.{ebay_item_id}"
                 payload = {
                     "scraped_stock_status": stock_status,
-                    "scraped_updated_at": now_jst.isoformat()
+                    "scraped_updated_at": now_jst.isoformat(),
+                    "is_scraped": stock_status != "不明",
                 }
 
                 response = requests.patch(url, headers=headers, json=payload)
