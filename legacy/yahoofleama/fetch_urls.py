@@ -1,5 +1,6 @@
 import csv
 import os
+import random
 import sys
 import time
 from datetime import datetime
@@ -17,6 +18,7 @@ PAGE_SIZE = int(os.getenv("SUPABASE_PAGE_SIZE", 200))
 FETCH_MAX_RETRIES = int(os.getenv("FETCH_MAX_RETRIES", 5))
 FETCH_BACKOFF_BASE = float(os.getenv("FETCH_BACKOFF_BASE", 2.0))
 MAX_PAGES = int(os.getenv("MAX_PAGES", 0))
+MIN_PAGE_SIZE = int(os.getenv("SUPABASE_MIN_PAGE_SIZE", 50))
 
 
 def fetch_data_from_supabase():
@@ -30,6 +32,7 @@ def fetch_data_from_supabase():
     page = 0
     last_item_id = None
 
+    current_page_size = PAGE_SIZE
     while True:
         if MAX_PAGES > 0 and page >= MAX_PAGES:
             print(f"[INFO] MAX_PAGES={MAX_PAGES} に到達したため取得を打ち切ります")
@@ -38,9 +41,10 @@ def fetch_data_from_supabase():
         params = {
             "select": "ebay_item_id,ebay_user_id,stocking_url,listing_status",
             "listing_status": "eq.Active",
-            "stocking_url": "ilike.*paypayfleamarket.yahoo.co.jp*",
+            # Avoid heavy wildcard ilike query on DB side; filter domain in Python.
+            "stocking_url": "not.is.null",
             "order": "ebay_item_id.asc",
-            "limit": str(PAGE_SIZE),
+            "limit": str(current_page_size),
         }
         if last_item_id:
             params["ebay_item_id"] = f"gt.{last_item_id}"
@@ -61,7 +65,12 @@ def fetch_data_from_supabase():
             except Exception as e:  # noqa: BLE001
                 if attempt == FETCH_MAX_RETRIES - 1:
                     raise
-                sleep_sec = FETCH_BACKOFF_BASE * (2 ** attempt)
+                if "57014" in str(e) and current_page_size > MIN_PAGE_SIZE:
+                    new_size = max(MIN_PAGE_SIZE, current_page_size // 2)
+                    if new_size != current_page_size:
+                        print(f"[WARN] statement timeout detected; reduce page size {current_page_size} -> {new_size}")
+                        current_page_size = new_size
+                sleep_sec = FETCH_BACKOFF_BASE * (2 ** attempt) + random.uniform(0, 0.5)
                 print(
                     f"[WARN] fetch retry {attempt + 1}/{FETCH_MAX_RETRIES} failed "
                     f"(page={page + 1}): {e} / sleep={sleep_sec:.1f}s"
@@ -75,7 +84,7 @@ def fetch_data_from_supabase():
         last_item_id = data[-1]["ebay_item_id"]
         print(f"[DEBUG] page={page + 1} 取得={len(data)}件（累計: {len(all_data)}件）")
 
-        if len(data) < PAGE_SIZE:
+        if len(data) < current_page_size:
             break
 
         page += 1
@@ -84,7 +93,10 @@ def fetch_data_from_supabase():
 
 
 def save_filtered_csv(data):
-    filtered = [row for row in data if "paypayfleamarket.yahoo.co.jp" in row["stocking_url"]]
+    filtered = [
+        row for row in data
+        if row.get("stocking_url") and "paypayfleamarket.yahoo.co.jp" in row["stocking_url"]
+    ]
 
     os.makedirs("input", exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
