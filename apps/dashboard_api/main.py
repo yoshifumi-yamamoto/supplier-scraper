@@ -432,6 +432,8 @@ def validator_summary() -> dict:
         "failed_recent": 0,
         "retried_count": 0,
         "skipped_count": 0,
+        "retried": [],
+        "skipped": [],
         "status": "unknown",
     }
     try:
@@ -456,6 +458,8 @@ def validator_summary() -> dict:
                 "failed_recent": int(row.get("failed_recent") or 0),
                 "retried_count": len(retried),
                 "skipped_count": len(skipped),
+                "retried": retried[:10],
+                "skipped": skipped[:10],
                 "status": "ok",
             }
         return fallback

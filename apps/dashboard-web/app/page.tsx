@@ -107,6 +107,44 @@ export default async function Page() {
         </tbody>
       </table>
 
+      <h2 className="section-title">Validator Actions</h2>
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Site</th>
+            <th>Run ID</th>
+            <th>Reason</th>
+          </tr>
+        </thead>
+        <tbody>
+          {validator.retried.length === 0 && validator.skipped.length === 0 ? (
+            <tr>
+              <td colSpan={4}>No recent validator actions</td>
+            </tr>
+          ) : (
+            <>
+              {validator.retried.map((row, idx) => (
+                <tr key={`retried-${idx}-${row.failed_run_id ?? "-"}`}>
+                  <td>retried</td>
+                  <td>{row.site ?? "-"}</td>
+                  <td>{row.failed_run_id ?? "-"}</td>
+                  <td>transient error auto-retry</td>
+                </tr>
+              ))}
+              {validator.skipped.map((row, idx) => (
+                <tr key={`skipped-${idx}-${row.run_id ?? "-"}`}>
+                  <td>skipped</td>
+                  <td>{row.site ?? "-"}</td>
+                  <td>{row.run_id ?? "-"}</td>
+                  <td>{row.reason ?? "-"}</td>
+                </tr>
+              ))}
+            </>
+          )}
+        </tbody>
+      </table>
+
       <h2 className="section-title">Schedule</h2>
       <table className="table">
         <thead>

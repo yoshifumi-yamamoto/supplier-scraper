@@ -52,6 +52,8 @@ export type ValidatorSummary = {
   failed_recent: number;
   retried_count: number;
   skipped_count: number;
+  retried: { site?: string; failed_run_id?: string }[];
+  skipped: { site?: string; run_id?: string; reason?: string }[];
   status: string;
 };
 
@@ -120,6 +122,8 @@ export async function fetchValidatorSummary(): Promise<ValidatorSummary> {
     failed_recent: 0,
     retried_count: 0,
     skipped_count: 0,
+    retried: [],
+    skipped: [],
     status: "unknown",
   };
   try {
