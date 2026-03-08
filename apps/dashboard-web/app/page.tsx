@@ -89,18 +89,20 @@ export default async function Page() {
           <tr>
             <th>Message</th>
             <th>Count</th>
+            <th>Last Seen</th>
           </tr>
         </thead>
         <tbody>
           {mcp.top_errors.length === 0 ? (
             <tr>
-              <td colSpan={2}>No recent errors</td>
+              <td colSpan={3}>No recent errors</td>
             </tr>
           ) : (
             mcp.top_errors.map((row) => (
               <tr key={`${row.message}-${row.count}`}>
                 <td>{row.message}</td>
                 <td>{row.count}</td>
+                <td>{row.last_seen_at ?? "-"}</td>
               </tr>
             ))
           )}

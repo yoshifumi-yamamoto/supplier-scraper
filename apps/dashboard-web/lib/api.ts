@@ -33,7 +33,7 @@ export type MCPSummary = {
     finished_at: string | null;
     error_summary: string;
   }[];
-  top_errors: { message: string; count: number }[];
+  top_errors: { message: string; count: number; last_seen_at?: string | null }[];
   server: {
     cpu_percent: number;
     memory_percent: number;

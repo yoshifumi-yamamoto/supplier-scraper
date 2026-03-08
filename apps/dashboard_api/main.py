@@ -366,6 +366,7 @@ def mcp_summary() -> dict:
         running = 0
         latest_by_site: dict[str, dict[str, Any]] = {}
         error_counter: Counter[str] = Counter()
+        error_last_seen: dict[str, str] = {}
 
         for row in runs_data:
             site = row.get("site") or "unknown"
@@ -402,6 +403,9 @@ def mcp_summary() -> dict:
             if status == "failed":
                 key = error_summary[:120] if error_summary else "failed_without_summary"
                 error_counter[key] += 1
+                seen_at = finished_at or started_at or ""
+                if seen_at and seen_at > error_last_seen.get(key, ""):
+                    error_last_seen[key] = seen_at
 
         proc = _process_counts()
         vm = psutil.virtual_memory()
@@ -413,7 +417,10 @@ def mcp_summary() -> dict:
                 "sites_tracked": len(latest_by_site),
             },
             "latest_by_site": sorted(latest_by_site.values(), key=lambda x: x["site"]),
-            "top_errors": [{"message": m, "count": c} for m, c in error_counter.most_common(5)],
+            "top_errors": [
+                {"message": m, "count": c, "last_seen_at": error_last_seen.get(m)}
+                for m, c in error_counter.most_common(5)
+            ],
             "server": {
                 "cpu_percent": psutil.cpu_percent(interval=0.2),
                 "memory_percent": vm.percent,
