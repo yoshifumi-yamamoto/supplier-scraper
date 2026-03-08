@@ -11,6 +11,7 @@ import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from scrapers.sites.registry import list_sites
 
 app = FastAPI(title="Supplier Scraper MCP Server")
 
@@ -21,7 +22,7 @@ JOB_LOG_DIR.mkdir(parents=True, exist_ok=True)
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY", "")
 
-ALLOWED_SITES = {"yahoofleama", "secondstreet"}
+ALLOWED_SITES = set(list_sites())
 JOBS: dict[str, dict[str, Any]] = {}
 
 

@@ -4,7 +4,7 @@ from scrapers.common.legacy_pipeline import run_legacy_pipeline
 def run_pipeline(run_id: str) -> dict:
     return run_legacy_pipeline(
         run_id=run_id,
-        site="yahoofleama",
+        site="yodobashi",
         scripts=[
             "fetch_urls.py",
             "split_urls.py",

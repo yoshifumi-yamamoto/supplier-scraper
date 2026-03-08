@@ -11,8 +11,7 @@ from scrapers.common.execution_guard import (
 from scrapers.common.logging_utils import json_log
 from scrapers.common.notifier import build_failure_message, notify_chatwork
 from scrapers.common.run_store import create_run, finish_run
-from scrapers.sites.secondstreet.adapter import run_pipeline as run_secondstreet
-from scrapers.sites.yahoofleama.adapter import run_pipeline as run_yahoofleama
+from scrapers.sites.registry import SITE_RUNNERS, list_sites
 
 
 def main() -> int:
@@ -20,7 +19,7 @@ def main() -> int:
     parser.add_argument(
         "--site",
         required=True,
-        choices=["yahoofleama", "secondstreet"],
+        choices=list_sites(),
         help="target site",
     )
     args = parser.parse_args()
@@ -43,12 +42,10 @@ def main() -> int:
 
     try:
         cleanup_site_processes(args.site)
-        if args.site == "yahoofleama":
-            result = run_yahoofleama(run_id)
-        elif args.site == "secondstreet":
-            result = run_secondstreet(run_id)
-        else:
+        site_runner = SITE_RUNNERS.get(args.site)
+        if not site_runner:
             raise ValueError(f"Unsupported site: {args.site}")
+        result = site_runner(run_id)
 
         result_message = result.pop("message", None)
         if result_message:
