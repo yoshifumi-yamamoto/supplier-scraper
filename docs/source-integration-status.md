@@ -13,25 +13,20 @@
 ## Sites Registered
 - `yahoofleama` (active)
 - `secondstreet` (active)
-- `mercari` (registered)
-- `rakuma` (registered)
-- `yafuoku` (registered)
-- `yodobashi` (registered)
-- `hardoff` (registered)
+- `mercari` (copied)
+- `rakuma` (copied)
+- `yafuoku` (copied)
+- `yodobashi` (copied)
+- `hardoff` (copied)
 - `rakuten` (API monitoring path)
 
 ## Migration Meaning
 - `active`: legacy directory exists in integrated repo and is already used in production cron.
-- `registered`: site can be selected from runner/MCP but requires copying legacy scripts to `legacy/<site>/`.
+- `copied`: legacy directory was copied and can be run from unified runner, but not yet enabled in production cron.
+- `registered`: site is in registry but legacy scripts are not copied yet.
 
 ## Next Steps To Complete Full Source Integration
-1. Copy each site legacy source into integrated repo:
-   - `legacy/mercari`
-   - `legacy/rakuma`
-   - `legacy/yafuoku`
-   - `legacy/yodobashi`
-   - `legacy/hardoff`
-2. Run per-site smoke test:
+1. Run per-site smoke test:
    - `PYTHONPATH=. python apps/runner/main.py --site <site>`
-3. Add site-specific cron slots after smoke tests pass.
-4. Remove old standalone repo execution paths.
+2. Add site-specific cron slots after smoke tests pass.
+3. Remove old standalone repo execution paths.

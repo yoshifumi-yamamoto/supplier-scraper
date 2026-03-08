@@ -10,7 +10,6 @@ def run_pipeline(run_id: str) -> dict:
             "split_urls.py",
             "scrape_status.py",
             "summarize_results.py",
-            "upload_to_supabase.py",
             "delete_temp_data.py",
         ],
     )
