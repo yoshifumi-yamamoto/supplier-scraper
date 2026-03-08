@@ -36,7 +36,12 @@ def run_legacy_pipeline(
         }
 
     for script in scripts:
+        script_path = legacy_dir / script
         step_id = start_step(run_id=run_id, step_name=script)
+        if not script_path.exists():
+            # Some sites do not have upload script in legacy implementation.
+            finish_step(step_id, status="success", message=f"skipped: {script} not found")
+            continue
         result = subprocess.run(
             ["python3", script],
             cwd=str(legacy_dir),
@@ -46,6 +51,16 @@ def run_legacy_pipeline(
         )
         combined_output = f"{result.stdout}\n{result.stderr}".strip()
         if result.returncode != 0:
+            # In no-data runs, upload step may fail because summarized folder does not exist.
+            if (
+                script == "upload_to_supabase.py"
+                and (
+                    "summarized フォルダが見つかりません" in combined_output
+                    or "summarized folder not found" in combined_output.lower()
+                )
+            ):
+                finish_step(step_id, status="success", message="skipped: no summarized output")
+                continue
             detail = (combined_output[:400] or "non-zero exit").replace("\n", " | ")
             finish_step(step_id, status="failed", message=detail)
             return {
