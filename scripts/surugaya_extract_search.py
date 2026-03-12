@@ -49,6 +49,19 @@ def write_progress(path: str | None, payload: dict) -> None:
         pass
 
 
+def open_csv_writer(path: str):
+    fp = open(path, 'w', encoding='utf-8', newline='')
+    writer = csv.DictWriter(fp, fieldnames=CSV_HEADERS)
+    writer.writeheader()
+    fp.flush()
+    return fp, writer
+
+
+def append_record(fp, writer, record: dict[str, str]) -> None:
+    writer.writerow(record)
+    fp.flush()
+
+
 def clean_text(text: str) -> list[str]:
     return [line.strip() for line in text.splitlines() if line.strip()]
 
@@ -232,6 +245,7 @@ def main() -> int:
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
     progress_path = args.progress or None
     driver = build_driver(args.headless)
+    csv_fp, csv_writer = open_csv_writer(args.output)
     current_url = args.search_url
     page = 0
     seen = set()
@@ -255,20 +269,24 @@ def main() -> int:
                     continue
                 seen.add(url)
                 try:
-                    records.append(extract_record(driver, url))
+                    record = extract_record(driver, url)
+                    records.append(record)
+                    append_record(csv_fp, csv_writer, record)
+                    print(f'[ok] {url}', file=sys.stderr)
                 except Exception as exc:
                     skip_count += 1
                     print(f'[skip] {url} reason={exc}', file=sys.stderr)
                 write_progress(progress_path, {'status': 'running', 'page': page, 'extracted_count': len(records), 'skip_count': skip_count, 'message': current_url})
             current_url = next_url
-        with open(args.output, 'w', encoding='utf-8', newline='') as fp:
-            writer = csv.DictWriter(fp, fieldnames=CSV_HEADERS)
-            writer.writeheader()
-            writer.writerows(records)
         write_progress(progress_path, {'status': 'completed', 'page': page, 'extracted_count': len(records), 'skip_count': skip_count, 'output': args.output})
         print(f'wrote {len(records)} rows to {args.output}', file=sys.stderr)
         return 0
+    except KeyboardInterrupt:
+        write_progress(progress_path, {'status': 'cancelled', 'page': page, 'extracted_count': len(records), 'skip_count': skip_count, 'output': args.output, 'message': f'cancelled with {len(records)} rows'})
+        print(f'cancelled after {len(records)} rows', file=sys.stderr)
+        return 130
     finally:
+        csv_fp.close()
         try:
             driver.quit()
         except Exception:

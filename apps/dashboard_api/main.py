@@ -1,5 +1,6 @@
 import json
 import os
+import signal
 import subprocess
 import time
 from collections import Counter
@@ -355,11 +356,62 @@ def _history_filename(row: dict[str, Any]) -> str:
 def _job_status(job: dict[str, Any]) -> str:
     pid = job.get("pid")
     output_path = job.get("output_path") or ""
+    progress = _read_progress(job.get("progress_path"))
     if _pid_running(pid):
         return "running"
+    if progress and progress.get("status") in {"cancelled", "failed"}:
+        return str(progress.get("status"))
+    if job.get("status") in {"cancelled", "failed"}:
+        return str(job.get("status"))
     if output_path and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
         return "completed"
     return "failed"
+
+
+def _cancel_extract_job(job: dict[str, Any], active_state_path: str) -> dict[str, Any]:
+    pid = job.get("pid")
+    if not pid or not _pid_running(pid):
+        raise HTTPException(status_code=409, detail="extract job is not running")
+
+    progress_path = job.get("progress_path")
+    progress = _read_progress(progress_path) or {}
+    progress.update({
+        "status": "cancelling",
+        "message": "cancellation requested",
+    })
+    if progress_path:
+        _write_json(progress_path, progress)
+
+    try:
+        os.kill(pid, signal.SIGINT)
+    except OSError as exc:
+        raise HTTPException(status_code=409, detail=f"failed to signal process: {exc}") from exc
+
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        if not _pid_running(pid):
+            break
+        time.sleep(0.25)
+
+    if _pid_running(pid):
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+    progress = _read_progress(progress_path) or {}
+    if progress.get("status") not in {"cancelled", "completed"}:
+        progress.update({
+            "status": "cancelled",
+            "message": progress.get("message") or "cancelled by user",
+        })
+        if progress_path:
+            _write_json(progress_path, progress)
+
+    stopped = dict(job)
+    stopped["status"] = "cancelled"
+    _write_json(active_state_path, {})
+    return {"cancelled": True, "job": stopped}
 
 
 def _load_active_job() -> dict[str, Any] | None:
@@ -428,6 +480,15 @@ def mercari_extract_status() -> dict:
     _extract_state_dir()
     active = _load_active_job()
     return {"active_job": active}
+
+
+@app.post("/api/extract/mercari/stop")
+def mercari_extract_stop() -> dict:
+    _extract_state_dir()
+    active = _load_active_job()
+    if not active:
+        raise HTTPException(status_code=404, detail="no active extract")
+    return _cancel_extract_job(active, MERCARI_EXTRACT_ACTIVE_STATE)
 
 
 @app.get("/api/extract/mercari/history")
@@ -565,6 +626,15 @@ def kitamura_extract_status() -> dict:
     _kitamura_extract_state_dir()
     active = _load_kitamura_active_job()
     return {"active_job": active}
+
+
+@app.post("/api/extract/kitamura/stop")
+def kitamura_extract_stop() -> dict:
+    _kitamura_extract_state_dir()
+    active = _load_kitamura_active_job()
+    if not active:
+        raise HTTPException(status_code=404, detail="no active extract")
+    return _cancel_extract_job(active, KITAMURA_EXTRACT_ACTIVE_STATE)
 
 
 @app.get("/api/extract/kitamura/history")
@@ -763,6 +833,15 @@ def _append_surugaya_history(job: dict) -> None:
 @app.get("/api/extract/surugaya/status")
 def surugaya_extract_status() -> dict:
     return {"active_job": _load_surugaya_active_job()}
+
+
+@app.post("/api/extract/surugaya/stop")
+def surugaya_extract_stop() -> dict:
+    _surugaya_extract_state_dir()
+    active = _load_surugaya_active_job()
+    if not active:
+        raise HTTPException(status_code=404, detail="no active extract")
+    return _cancel_extract_job(active, SURUGAYA_EXTRACT_ACTIVE_STATE)
 
 
 @app.get("/api/extract/surugaya/history")

@@ -62,6 +62,7 @@ export function KitamuraExtractPanel() {
   const [maxPages, setMaxPages] = useState("");
   const [maxItems, setMaxItems] = useState("400");
   const [loading, setLoading] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<ExtractJob | null>(null);
@@ -153,6 +154,26 @@ export function KitamuraExtractPanel() {
     }
   }
 
+  async function onStop() {
+    if (!activeJob) return;
+    if (!window.confirm("途中までのCSVを残したまま抽出を中止します。実行しますか。")) return;
+    setStopping(true);
+    setError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/extract/kitamura/stop`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail ?? "failed to stop extract");
+      }
+      setResult(null);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "failed to stop extract");
+    } finally {
+      setStopping(false);
+    }
+  }
+
   const disabled = loading || Boolean(activeJob);
 
   return (
@@ -214,6 +235,11 @@ export function KitamuraExtractPanel() {
           <p>残り件数目安: {activeMetrics.remaining ?? "-"}</p>
           <p>処理ページ: {activeJob.progress?.page ?? 0}</p>
           {activeJob.progress?.message ? <p>進捗: {activeJob.progress.message}</p> : null}
+          <div className="extract-actions">
+            <button className="extract-delete-button" type="button" onClick={onStop} disabled={stopping}>
+              {stopping ? "中止中..." : "途中で中止"}
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -239,7 +265,7 @@ export function KitamuraExtractPanel() {
             <option value="">選択してください</option>
             {history.map((row) => (
               <option key={row.filename ?? row.output_path} value={row.filename ?? ""}>
-                {row.display_name ?? row.filename} / {row.status === "completed" ? "完了" : row.status === "running" ? "実行中" : "失敗"}
+                {row.display_name ?? row.filename} / {row.status === "completed" ? "完了" : row.status === "running" ? "実行中" : row.status === "cancelled" ? "中止" : "失敗"}
               </option>
             ))}
           </select>

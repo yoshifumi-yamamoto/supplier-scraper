@@ -347,6 +347,14 @@ def default_output_path(search_url):
     return os.path.join("samples", f"{safe_keyword}-Yahoo抽出.csv")
 
 
+def open_csv_writer(path: str):
+    fp = open(path, "w", encoding="utf-8", newline="")
+    writer = csv.DictWriter(fp, fieldnames=CSV_HEADERS)
+    writer.writeheader()
+    fp.flush()
+    return fp, writer
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", required=True, help="Yahoo!オークション検索一覧URL")
@@ -358,23 +366,22 @@ def main():
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
     driver = setup_driver()
+    csv_fp, csv_writer = open_csv_writer(output_path)
     try:
         detail_urls = collect_detail_urls(driver, args.url, args.max_items)
         if not detail_urls:
             raise RuntimeError("一覧から商品URLを取得できませんでした")
 
-        rows = []
         for index, detail_url in enumerate(detail_urls, start=1):
             print(f"[{index}/{len(detail_urls)}] {detail_url}")
-            rows.append(scrape_listing(driver, detail_url))
-
-        with open(output_path, "w", encoding="utf-8", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
-            writer.writeheader()
-            writer.writerows(rows)
-
+            csv_writer.writerow(scrape_listing(driver, detail_url))
+            csv_fp.flush()
         print(f"saved: {output_path}")
+    except KeyboardInterrupt:
+        print(f"cancelled: {output_path}")
+        return
     finally:
+        csv_fp.close()
         driver.quit()
 
 

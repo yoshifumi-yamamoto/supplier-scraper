@@ -59,6 +59,19 @@ def write_progress(path: str | None, payload: dict) -> None:
         pass
 
 
+def open_csv_writer(path: str):
+    fp = open(path, 'w', encoding='utf-8-sig', newline='')
+    writer = csv.DictWriter(fp, fieldnames=CSV_HEADERS)
+    writer.writeheader()
+    fp.flush()
+    return fp, writer
+
+
+def append_record(fp, writer, record: dict[str, str]) -> None:
+    writer.writerow(record)
+    fp.flush()
+
+
 def clean_lines(text: str) -> list[str]:
     return [line.strip() for line in text.splitlines() if line.strip()]
 
@@ -266,6 +279,7 @@ def main() -> int:
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
     progress_path = args.progress or None
     driver = build_driver(headless=args.headless)
+    csv_fp, csv_writer = open_csv_writer(args.output)
     seen_codes: set[str] = set()
     records: list[dict[str, str]] = []
     skip_count = 0
@@ -297,7 +311,9 @@ def main() -> int:
                     continue
                 seen_codes.add(code)
                 try:
-                    records.append(extract_record(driver, entry))
+                    record = extract_record(driver, entry)
+                    records.append(record)
+                    append_record(csv_fp, csv_writer, record)
                     page_ok += 1
                     print(f"[ok] {entry['url']}", file=sys.stderr)
                 except Exception as exc:
@@ -308,15 +324,16 @@ def main() -> int:
             print(f"[page-summary] page={page} ok={page_ok} skip={page_skip} total={len(records)}", file=sys.stderr)
             current_url = next_url
 
-        with open(args.output, 'w', encoding='utf-8-sig', newline='') as fp:
-            writer = csv.DictWriter(fp, fieldnames=CSV_HEADERS)
-            writer.writeheader()
-            writer.writerows(records)
         write_progress(progress_path, {'status': 'completed', 'page': page, 'extracted_count': len(records), 'skip_count': skip_count, 'seen_count': len(seen_codes), 'max_items': args.max_items, 'max_pages': args.max_pages, 'next_url': None, 'message': f'completed with {len(records)} rows'})
+    except KeyboardInterrupt:
+        write_progress(progress_path, {'status': 'cancelled', 'page': page, 'extracted_count': len(records), 'skip_count': skip_count, 'seen_count': len(seen_codes), 'max_items': args.max_items, 'max_pages': args.max_pages, 'next_url': current_url, 'message': f'cancelled with {len(records)} rows'})
+        print(f'cancelled after {len(records)} rows', file=sys.stderr)
+        return 130
     except Exception as exc:
         write_progress(progress_path, {'status': 'failed', 'page': page, 'extracted_count': len(records), 'skip_count': skip_count, 'seen_count': len(seen_codes), 'max_items': args.max_items, 'max_pages': args.max_pages, 'next_url': current_url, 'message': str(exc)})
         raise
     finally:
+        csv_fp.close()
         driver.quit()
 
     print(f'wrote {len(records)} rows to {args.output}')

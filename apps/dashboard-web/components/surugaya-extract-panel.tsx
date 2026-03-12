@@ -15,6 +15,7 @@ export function SurugayaExtractPanel() {
   const [activeJob, setActiveJob] = useState<any>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [message, setMessage] = useState("");
+  const [stopping, setStopping] = useState(false);
   const [selected, setSelected] = useState<HistoryItem | null>(null);
 
   async function refresh() {
@@ -72,6 +73,23 @@ export function SurugayaExtractPanel() {
     await refresh();
   }
 
+  async function onStop() {
+    if (!activeJob) return;
+    if (!confirm("途中までのCSVを残したまま抽出を中止します。実行しますか。")) return;
+    setStopping(true);
+    setMessage("");
+    const res = await fetch(`${API_BASE}/api/extract/surugaya/stop`, { method: "POST" });
+    const body = await res.json();
+    if (!res.ok) {
+      setMessage(body.detail || "stop failed");
+      setStopping(false);
+      return;
+    }
+    setMessage("抽出を中止しました。途中までのCSVを保持しています。");
+    setStopping(false);
+    await refresh();
+  }
+
   return (
     <div className="extract-panel">
       <div className="extract-form-grid">
@@ -82,13 +100,13 @@ export function SurugayaExtractPanel() {
         <button onClick={onStart} disabled={isRunning || !displayName || !searchUrl}>スタート</button>
       </div>
       {message ? <p>{message}</p> : null}
-      {activeJob ? <div className="ops-card"><p>抽出ジョブが実行中です。</p><h4>{activeJob.progress?.extracted_count ?? 0}件</h4><p>page {activeJob.progress?.page ?? 0} / skip {activeJob.progress?.skip_count ?? 0}</p></div> : null}
+      {activeJob ? <div className="ops-card"><p>抽出ジョブが実行中です。</p><h4>{activeJob.progress?.extracted_count ?? 0}件</h4><p>page {activeJob.progress?.page ?? 0} / skip {activeJob.progress?.skip_count ?? 0}</p><button onClick={onStop} disabled={stopping}>{stopping ? "中止中..." : "途中で中止"}</button></div> : null}
       <div className="panel-head"><h3>履歴</h3><span>{history.length}件</span></div>
       <div className="list">
         {history.map((row) => (
           <button key={row.filename} className="list-item" onClick={() => setSelected(row)}>
             <p>{row.display_name || row.filename}</p>
-            <div><span>{row.status || '-'}</span><span>{row.extracted_count ?? 0}件</span></div>
+            <div><span>{row.status === "cancelled" ? "中止" : (row.status || '-')}</span><span>{row.extracted_count ?? 0}件</span></div>
           </button>
         ))}
       </div>
