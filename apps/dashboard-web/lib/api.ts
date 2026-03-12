@@ -1,7 +1,7 @@
 export type Overview = {
   today_runs: number;
   today_failures: number;
-  sites: { site: string; latest_status: string; last_run: string | null }[];
+  sites: { site: string; latest_status: string; last_run: string | null; last_run_status?: string | null; success_rate?: number | null; run_success_rate?: number | null }[];
 };
 
 export type SystemMemory = {
@@ -57,11 +57,12 @@ export type ValidatorSummary = {
   status: string;
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_DASHBOARD_API_BASE ?? "http://127.0.0.1:8080";
+const SERVER_API_BASE = process.env.DASHBOARD_API_BASE ?? "http://127.0.0.1:8080";
+const CLIENT_API_BASE = process.env.NEXT_PUBLIC_DASHBOARD_API_BASE ?? "";
 
 export async function fetchOverview(): Promise<Overview> {
   try {
-    const res = await fetch(`${API_BASE}/api/overview`, { cache: "no-store" });
+    const res = await fetch(`${SERVER_API_BASE}/api/overview`, { next: { revalidate: 10 } });
     if (!res.ok) {
       return { today_runs: 0, today_failures: 0, sites: [] };
     }
@@ -73,7 +74,7 @@ export async function fetchOverview(): Promise<Overview> {
 
 export async function fetchSystemMemory(): Promise<SystemMemory> {
   try {
-    const res = await fetch(`${API_BASE}/api/system/memory`, { cache: "no-store" });
+    const res = await fetch(`${SERVER_API_BASE}/api/system/memory`, { next: { revalidate: 5 } });
     if (!res.ok) {
       return {
         memory: { total_mb: 0, used_mb: 0, available_mb: 0, percent: 0 },
@@ -97,7 +98,7 @@ export async function fetchMCPSummary(): Promise<MCPSummary> {
     server: { cpu_percent: 0, memory_percent: 0, chrome_processes: 0, runner_processes: 0 },
   };
   try {
-    const res = await fetch(`${API_BASE}/api/mcp/summary`, { cache: "no-store" });
+    const res = await fetch(`${SERVER_API_BASE}/api/mcp/summary`, { next: { revalidate: 10 } });
     if (!res.ok) return fallback;
     return res.json();
   } catch {
@@ -108,7 +109,7 @@ export async function fetchMCPSummary(): Promise<MCPSummary> {
 export async function fetchSystemSchedule(): Promise<SystemSchedule> {
   const fallback: SystemSchedule = { timezone: "Asia/Tokyo", items: [] };
   try {
-    const res = await fetch(`${API_BASE}/api/system/schedule`, { cache: "no-store" });
+    const res = await fetch(`${SERVER_API_BASE}/api/system/schedule`, { next: { revalidate: 60 } });
     if (!res.ok) return fallback;
     return res.json();
   } catch {
@@ -127,10 +128,14 @@ export async function fetchValidatorSummary(): Promise<ValidatorSummary> {
     status: "unknown",
   };
   try {
-    const res = await fetch(`${API_BASE}/api/validator/summary`, { cache: "no-store" });
+    const res = await fetch(`${SERVER_API_BASE}/api/validator/summary`, { next: { revalidate: 30 } });
     if (!res.ok) return fallback;
     return res.json();
   } catch {
     return fallback;
   }
+}
+
+export function clientApiBase(): string {
+  return CLIENT_API_BASE;
 }

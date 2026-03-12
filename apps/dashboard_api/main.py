@@ -1,14 +1,18 @@
 import json
 import os
 import subprocess
+import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlparse
+import re
 
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, JSONResponse
 import requests
 import psutil
+from pydantic import BaseModel
 
 app = FastAPI(title="Supplier Scraper Dashboard API")
 
@@ -18,6 +22,124 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY
 ITEMS_TABLE = os.getenv("ITEMS_TABLE", "items")
 RUNS_TABLE = os.getenv("RUNS_TABLE", "scrape_runs")
 VALIDATOR_LOG_PATH = os.getenv("VALIDATOR_LOG_PATH", "/var/log/validator_agent.log")
+MERCARI_EXTRACT_SCRIPT = os.getenv(
+    "MERCARI_EXTRACT_SCRIPT",
+    "/root/supplier-scraper-main/scripts/mercari_extract_search.py",
+)
+MERCARI_EXTRACT_OUTPUT_DIR = os.getenv(
+    "MERCARI_EXTRACT_OUTPUT_DIR",
+    "/root/supplier-scraper-main/output/mercari_extract",
+)
+MERCARI_EXTRACT_LOG_DIR = os.getenv(
+    "MERCARI_EXTRACT_LOG_DIR",
+    "/var/log",
+)
+MERCARI_EXTRACT_STATE_DIR = os.getenv(
+    "MERCARI_EXTRACT_STATE_DIR",
+    "/root/supplier-scraper-main/output/mercari_extract",
+)
+MERCARI_EXTRACT_ACTIVE_STATE = os.path.join(MERCARI_EXTRACT_STATE_DIR, "active_job.json")
+MERCARI_EXTRACT_HISTORY_STATE = os.path.join(MERCARI_EXTRACT_STATE_DIR, "history.json")
+KITAMURA_EXTRACT_SCRIPT = os.getenv(
+    "KITAMURA_EXTRACT_SCRIPT",
+    "/root/supplier-scraper-main/scripts/kitamura_extract_search.py",
+)
+KITAMURA_EXTRACT_OUTPUT_DIR = os.getenv(
+    "KITAMURA_EXTRACT_OUTPUT_DIR",
+    "/root/supplier-scraper-main/output/kitamura_extract",
+)
+KITAMURA_EXTRACT_LOG_DIR = os.getenv(
+    "KITAMURA_EXTRACT_LOG_DIR",
+    "/var/log",
+)
+KITAMURA_EXTRACT_STATE_DIR = os.getenv(
+    "KITAMURA_EXTRACT_STATE_DIR",
+    "/root/supplier-scraper-main/output/kitamura_extract",
+)
+KITAMURA_EXTRACT_ACTIVE_STATE = os.path.join(KITAMURA_EXTRACT_STATE_DIR, "active_job.json")
+KITAMURA_EXTRACT_HISTORY_STATE = os.path.join(KITAMURA_EXTRACT_STATE_DIR, "history.json")
+SURUGAYA_EXTRACT_SCRIPT = os.getenv(
+    "SURUGAYA_EXTRACT_SCRIPT",
+    "/root/supplier-scraper-main/scripts/surugaya_extract_search.py",
+)
+SURUGAYA_EXTRACT_OUTPUT_DIR = os.getenv(
+    "SURUGAYA_EXTRACT_OUTPUT_DIR",
+    "/root/supplier-scraper-main/output/surugaya_extract",
+)
+SURUGAYA_EXTRACT_LOG_DIR = os.getenv(
+    "SURUGAYA_EXTRACT_LOG_DIR",
+    "/var/log",
+)
+SURUGAYA_EXTRACT_STATE_DIR = os.getenv(
+    "SURUGAYA_EXTRACT_STATE_DIR",
+    "/root/supplier-scraper-main/output/surugaya_extract",
+)
+SURUGAYA_EXTRACT_ACTIVE_STATE = os.path.join(SURUGAYA_EXTRACT_STATE_DIR, "active_job.json")
+SURUGAYA_EXTRACT_HISTORY_STATE = os.path.join(SURUGAYA_EXTRACT_STATE_DIR, "history.json")
+
+
+CACHE_TTL_OVERVIEW = int(os.getenv("DASHBOARD_CACHE_TTL_OVERVIEW", "10"))
+CACHE_TTL_MCP_SUMMARY = int(os.getenv("DASHBOARD_CACHE_TTL_MCP_SUMMARY", "10"))
+CACHE_TTL_MEMORY = int(os.getenv("DASHBOARD_CACHE_TTL_MEMORY", "5"))
+CACHE_TTL_SCHEDULE = int(os.getenv("DASHBOARD_CACHE_TTL_SCHEDULE", "60"))
+CACHE_TTL_VALIDATOR = int(os.getenv("DASHBOARD_CACHE_TTL_VALIDATOR", "30"))
+_API_CACHE: dict[str, dict[str, Any]] = {}
+
+
+def _cache_get(key: str) -> Any | None:
+    row = _API_CACHE.get(key)
+    if not row:
+        return None
+    if row["expires_at"] <= time.time():
+        _API_CACHE.pop(key, None)
+        return None
+    return row["value"]
+
+
+def _cache_set(key: str, value: Any, ttl: int) -> Any:
+    _API_CACHE[key] = {"value": value, "expires_at": time.time() + max(ttl, 1)}
+    return value
+
+
+def _cached(key: str, ttl: int, builder):
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+    return _cache_set(key, builder(), ttl)
+
+
+class MercariExtractRequest(BaseModel):
+    search_url: str
+    display_name: str
+    max_pages: int = 0
+    max_items: int = 400
+    headless: bool = True
+
+
+class KitamuraExtractRequest(BaseModel):
+    search_url: str
+    display_name: str
+    max_pages: int = 0
+    max_items: int = 400
+    headless: bool = True
+
+
+class SurugayaExtractRequest(BaseModel):
+    search_url: str
+    display_name: str
+    max_pages: int = 0
+    max_items: int = 400
+    headless: bool = True
+
+
+def _parse_ts(raw: str | None) -> datetime | None:
+    if not raw:
+        return None
+    text = raw.strip().replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
 
 
 def _site_from_url(url: str | None) -> str:
@@ -40,6 +162,8 @@ def _site_from_url(url: str | None) -> str:
         return "yodobashi"
     if "hardoff" in text:
         return "hardoff"
+    if "suruga-ya.jp" in text:
+        return "surugaya"
     return "other"
 
 
@@ -109,79 +233,722 @@ def _process_counts() -> dict[str, int]:
     return {"chrome_processes": chrome, "runner_processes": runner}
 
 
+def _is_valid_mercari_search_url(value: str) -> bool:
+    try:
+        parsed = urlparse(value)
+    except Exception:  # noqa: BLE001
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    if parsed.netloc not in ("jp.mercari.com", "mercari.com"):
+        return False
+    return parsed.path == "/search"
+
+
+def _is_valid_kitamura_search_url(value: str) -> bool:
+    try:
+        parsed = urlparse(value)
+    except Exception:  # noqa: BLE001
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    if parsed.netloc != "shop.kitamura.jp":
+        return False
+    return parsed.path == "/ec/list"
+
+
+def _extract_state_dir() -> None:
+    os.makedirs(MERCARI_EXTRACT_OUTPUT_DIR, exist_ok=True)
+    os.makedirs(MERCARI_EXTRACT_LOG_DIR, exist_ok=True)
+    os.makedirs(MERCARI_EXTRACT_STATE_DIR, exist_ok=True)
+
+
+def _kitamura_extract_state_dir() -> None:
+    os.makedirs(KITAMURA_EXTRACT_OUTPUT_DIR, exist_ok=True)
+    os.makedirs(KITAMURA_EXTRACT_LOG_DIR, exist_ok=True)
+    os.makedirs(KITAMURA_EXTRACT_STATE_DIR, exist_ok=True)
+
+
+def _surugaya_extract_state_dir() -> None:
+    os.makedirs(SURUGAYA_EXTRACT_OUTPUT_DIR, exist_ok=True)
+    os.makedirs(SURUGAYA_EXTRACT_LOG_DIR, exist_ok=True)
+    os.makedirs(SURUGAYA_EXTRACT_STATE_DIR, exist_ok=True)
+
+
+def _sanitize_output_name(value: str) -> str:
+    slug = re.sub(r"[^0-9A-Za-z_-]+", "_", (value or "").strip())
+    slug = slug.strip("._-")
+    return slug[:80]
+
+
+def _read_json(path: str, default: Any) -> Any:
+    if not os.path.exists(path):
+        return default
+    try:
+        with open(path, "r", encoding="utf-8") as fp:
+            return json.load(fp)
+    except Exception:  # noqa: BLE001
+        return default
+
+
+def _write_json(path: str, payload: Any) -> None:
+    with open(path, "w", encoding="utf-8") as fp:
+        json.dump(payload, fp, ensure_ascii=False, indent=2)
+
+
+def _read_progress(path: str | None) -> dict[str, Any] | None:
+    if not path:
+        return None
+    data = _read_json(path, None)
+    return data if isinstance(data, dict) else None
+
+
+def _enrich_extract_job(item: dict[str, Any]) -> dict[str, Any]:
+    job = dict(item)
+    job["status"] = _job_status(job)
+    output_path = job.get("output_path") or ""
+    filename = _history_filename(job)
+    job["filename"] = filename
+    job["download_url"] = f"/api/extract/mercari/download/{filename}" if filename and os.path.exists(output_path) else None
+    progress = _read_progress(job.get("progress_path"))
+    if progress:
+        job["progress"] = progress
+    return job
+
+
+def _enrich_kitamura_extract_job(item: dict[str, Any]) -> dict[str, Any]:
+    job = dict(item)
+    job["status"] = _job_status(job)
+    output_path = job.get("output_path") or ""
+    filename = _history_filename(job)
+    job["filename"] = filename
+    job["download_url"] = f"/api/extract/kitamura/download/{filename}" if filename and os.path.exists(output_path) else None
+    progress = _read_progress(job.get("progress_path"))
+    if progress:
+        job["progress"] = progress
+    return job
+
+
+def _pid_running(pid: int | None) -> bool:
+    if not pid:
+        return False
+    proc_state = f"/proc/{pid}/stat"
+    if os.path.exists(proc_state):
+        try:
+            stat = open(proc_state, "r", encoding="utf-8").read().split()
+            if len(stat) > 2 and stat[2] == "Z":
+                return False
+        except Exception:  # noqa: BLE001
+            return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _history_filename(row: dict[str, Any]) -> str:
+    output_path = row.get("output_path") or ""
+    return os.path.basename(output_path) if output_path else ""
+
+
+def _job_status(job: dict[str, Any]) -> str:
+    pid = job.get("pid")
+    output_path = job.get("output_path") or ""
+    if _pid_running(pid):
+        return "running"
+    if output_path and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+        return "completed"
+    return "failed"
+
+
+def _load_active_job() -> dict[str, Any] | None:
+    job = _read_json(MERCARI_EXTRACT_ACTIVE_STATE, None)
+    if not isinstance(job, dict):
+        return None
+    if _job_status(job) != "running":
+        _write_json(MERCARI_EXTRACT_ACTIVE_STATE, {})
+        return None
+    return _enrich_extract_job(job)
+
+
+def _load_kitamura_active_job() -> dict[str, Any] | None:
+    job = _read_json(KITAMURA_EXTRACT_ACTIVE_STATE, None)
+    if not isinstance(job, dict):
+        return None
+    if _job_status(job) != "running":
+        _write_json(KITAMURA_EXTRACT_ACTIVE_STATE, {})
+        return None
+    return _enrich_kitamura_extract_job(job)
+
+
+def _load_history() -> list[dict[str, Any]]:
+    rows = _read_json(MERCARI_EXTRACT_HISTORY_STATE, [])
+    if not isinstance(rows, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in rows[:100]:
+        if not isinstance(row, dict):
+            continue
+        out.append(_enrich_extract_job(row))
+    return out
+
+
+def _load_kitamura_history() -> list[dict[str, Any]]:
+    rows = _read_json(KITAMURA_EXTRACT_HISTORY_STATE, [])
+    if not isinstance(rows, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in rows[:100]:
+        if not isinstance(row, dict):
+            continue
+        out.append(_enrich_kitamura_extract_job(row))
+    return out
+
+
+def _append_history(job: dict[str, Any]) -> None:
+    rows = _load_history()
+    rows = [job] + [r for r in rows if r.get("started_at") != job.get("started_at")][:99]
+    _write_json(MERCARI_EXTRACT_HISTORY_STATE, rows)
+
+
+def _append_kitamura_history(job: dict[str, Any]) -> None:
+    rows = _load_kitamura_history()
+    rows = [job] + [r for r in rows if r.get("started_at") != job.get("started_at")][:99]
+    _write_json(KITAMURA_EXTRACT_HISTORY_STATE, rows)
+
+
 @app.get('/health')
 def health() -> dict:
     return {"ok": True}
 
 
+@app.get("/api/extract/mercari/status")
+def mercari_extract_status() -> dict:
+    _extract_state_dir()
+    active = _load_active_job()
+    return {"active_job": active}
+
+
+@app.get("/api/extract/mercari/history")
+def mercari_extract_history() -> dict:
+    _extract_state_dir()
+    return {"items": _load_history()}
+
+
+@app.get("/api/extract/mercari/download/{filename}")
+def mercari_extract_download(filename: str) -> FileResponse:
+    safe_name = os.path.basename(filename)
+    target = os.path.abspath(os.path.join(MERCARI_EXTRACT_OUTPUT_DIR, safe_name))
+    root = os.path.abspath(MERCARI_EXTRACT_OUTPUT_DIR)
+    if not target.startswith(root + os.sep):
+        raise HTTPException(status_code=400, detail="invalid filename")
+    if not os.path.exists(target):
+        raise HTTPException(status_code=404, detail="file not found")
+    return FileResponse(target, filename=safe_name, media_type="text/csv")
+
+
+@app.delete("/api/extract/mercari/history/{filename}")
+def mercari_extract_delete(filename: str) -> dict:
+    _extract_state_dir()
+    safe_name = os.path.basename(filename)
+    active = _load_active_job()
+    if active and _history_filename(active) == safe_name:
+        raise HTTPException(status_code=409, detail="cannot delete active extract")
+
+    target = os.path.abspath(os.path.join(MERCARI_EXTRACT_OUTPUT_DIR, safe_name))
+    root = os.path.abspath(MERCARI_EXTRACT_OUTPUT_DIR)
+    if not target.startswith(root + os.sep):
+        raise HTTPException(status_code=400, detail="invalid filename")
+
+    history = _read_json(MERCARI_EXTRACT_HISTORY_STATE, [])
+    if not isinstance(history, list):
+        history = []
+    removed = False
+    kept: list[dict[str, Any]] = []
+    log_path = None
+    for row in history:
+        if not isinstance(row, dict):
+            continue
+        if _history_filename(row) == safe_name:
+            removed = True
+            log_path = row.get("log_path") or log_path
+            continue
+        kept.append(row)
+    _write_json(MERCARI_EXTRACT_HISTORY_STATE, kept)
+
+    if os.path.exists(target):
+        os.remove(target)
+        removed = True
+    if log_path and os.path.exists(log_path):
+        os.remove(log_path)
+
+    if not removed:
+        raise HTTPException(status_code=404, detail="history file not found")
+
+    return {"deleted": True, "filename": safe_name}
+
+
+@app.post("/api/extract/mercari/start")
+def start_mercari_extract(req: MercariExtractRequest) -> dict:
+    if not _is_valid_mercari_search_url(req.search_url):
+        raise HTTPException(status_code=400, detail="search_url must be a Mercari search URL")
+    if req.max_pages < 0 or req.max_pages > 100:
+        raise HTTPException(status_code=400, detail="max_pages must be between 0 and 100")
+    if req.max_items < 1 or req.max_items > 10000:
+        raise HTTPException(status_code=400, detail="max_items must be between 1 and 10000")
+    display_name = (req.display_name or "").strip()
+    if not display_name:
+        raise HTTPException(status_code=400, detail="display_name is required")
+    base_name = _sanitize_output_name(display_name) or "kitamura_extract" or "mercari_extract" or "mercari_extract"
+    if not os.path.exists(MERCARI_EXTRACT_SCRIPT):
+        raise HTTPException(status_code=500, detail="extract script not found")
+
+    _extract_state_dir()
+    active_job = _load_active_job()
+    if active_job:
+        raise HTTPException(status_code=409, detail={"message": "extract already running", "active_job": active_job})
+
+    ts = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+    output_path = os.path.join(MERCARI_EXTRACT_OUTPUT_DIR, f"{base_name}_{ts}.csv")
+    log_path = os.path.join(MERCARI_EXTRACT_LOG_DIR, f"{base_name}_{ts}.log")
+    progress_path = os.path.join(MERCARI_EXTRACT_STATE_DIR, f"{base_name}_{ts}.progress.json")
+
+    command = [
+        "python3",
+        MERCARI_EXTRACT_SCRIPT,
+        "--search-url",
+        req.search_url,
+        "--output",
+        output_path,
+        "--max-pages",
+        str(req.max_pages),
+        "--progress",
+        progress_path,
+    ]
+    if req.max_items:
+        command.extend(["--max-items", str(req.max_items)])
+    if req.headless:
+        command.append("--headless")
+
+    with open(log_path, "a", encoding="utf-8") as log_fp:
+        proc = subprocess.Popen(  # noqa: S603
+            command,
+            stdout=log_fp,
+            stderr=log_fp,
+            cwd="/root/supplier-scraper-main",
+        )
+
+    job = {
+        "accepted": True,
+        "pid": proc.pid,
+        "display_name": display_name,
+        "output_name": base_name,
+        "output_path": output_path,
+        "log_path": log_path,
+        "progress_path": progress_path,
+        "search_url": req.search_url,
+        "max_pages": req.max_pages,
+        "max_items": req.max_items,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _write_json(MERCARI_EXTRACT_ACTIVE_STATE, job)
+    _append_history(job)
+    job["status"] = "running"
+    job["filename"] = os.path.basename(output_path)
+    job["download_url"] = None
+    return job
+
+
+@app.get("/api/extract/kitamura/status")
+def kitamura_extract_status() -> dict:
+    _kitamura_extract_state_dir()
+    active = _load_kitamura_active_job()
+    return {"active_job": active}
+
+
+@app.get("/api/extract/kitamura/history")
+def kitamura_extract_history() -> dict:
+    _kitamura_extract_state_dir()
+    return {"items": _load_kitamura_history()}
+
+
+@app.get("/api/extract/kitamura/download/{filename}")
+def kitamura_extract_download(filename: str) -> FileResponse:
+    safe_name = os.path.basename(filename)
+    target = os.path.abspath(os.path.join(KITAMURA_EXTRACT_OUTPUT_DIR, safe_name))
+    root = os.path.abspath(KITAMURA_EXTRACT_OUTPUT_DIR)
+    if not target.startswith(root + os.sep):
+        raise HTTPException(status_code=400, detail="invalid filename")
+    if not os.path.exists(target):
+        raise HTTPException(status_code=404, detail="file not found")
+    return FileResponse(target, filename=safe_name, media_type="text/csv")
+
+
+@app.delete("/api/extract/kitamura/history/{filename}")
+def kitamura_extract_delete(filename: str) -> dict:
+    _kitamura_extract_state_dir()
+    safe_name = os.path.basename(filename)
+    active = _load_kitamura_active_job()
+    if active and _history_filename(active) == safe_name:
+        raise HTTPException(status_code=409, detail="cannot delete active extract")
+
+    target = os.path.abspath(os.path.join(KITAMURA_EXTRACT_OUTPUT_DIR, safe_name))
+    root = os.path.abspath(KITAMURA_EXTRACT_OUTPUT_DIR)
+    if not target.startswith(root + os.sep):
+        raise HTTPException(status_code=400, detail="invalid filename")
+
+    history = _read_json(KITAMURA_EXTRACT_HISTORY_STATE, [])
+    if not isinstance(history, list):
+        history = []
+    removed = False
+    kept: list[dict[str, Any]] = []
+    log_path = None
+    for row in history:
+        if not isinstance(row, dict):
+            continue
+        if _history_filename(row) == safe_name:
+            removed = True
+            log_path = row.get("log_path") or log_path
+            continue
+        kept.append(row)
+    _write_json(KITAMURA_EXTRACT_HISTORY_STATE, kept)
+
+    if os.path.exists(target):
+        os.remove(target)
+        removed = True
+    if log_path and os.path.exists(log_path):
+        os.remove(log_path)
+
+    if not removed:
+        raise HTTPException(status_code=404, detail="history file not found")
+
+    return {"deleted": True, "filename": safe_name}
+
+
+@app.post("/api/extract/kitamura/start")
+def start_kitamura_extract(req: KitamuraExtractRequest) -> dict:
+    if not _is_valid_kitamura_search_url(req.search_url):
+        raise HTTPException(status_code=400, detail="search_url must be a Kitamura listing URL")
+    if req.max_pages < 0 or req.max_pages > 100:
+        raise HTTPException(status_code=400, detail="max_pages must be between 0 and 100")
+    if req.max_items < 1 or req.max_items > 10000:
+        raise HTTPException(status_code=400, detail="max_items must be between 1 and 10000")
+    display_name = (req.display_name or "").strip()
+    if not display_name:
+        raise HTTPException(status_code=400, detail="display_name is required")
+    base_name = _sanitize_output_name(display_name) or "kitamura_extract"
+    if not os.path.exists(KITAMURA_EXTRACT_SCRIPT):
+        raise HTTPException(status_code=500, detail="extract script not found")
+
+    _kitamura_extract_state_dir()
+    active_job = _load_kitamura_active_job()
+    if active_job:
+        raise HTTPException(status_code=409, detail={"message": "extract already running", "active_job": active_job})
+
+    ts = datetime.now(JST).strftime("%Y%m%d_%H%M%S")
+    output_path = os.path.join(KITAMURA_EXTRACT_OUTPUT_DIR, f"{base_name}_{ts}.csv")
+    log_path = os.path.join(KITAMURA_EXTRACT_LOG_DIR, f"{base_name}_{ts}.log")
+    progress_path = os.path.join(KITAMURA_EXTRACT_STATE_DIR, f"{base_name}_{ts}.progress.json")
+
+    command = [
+        "python3",
+        KITAMURA_EXTRACT_SCRIPT,
+        "--search-url",
+        req.search_url,
+        "--output",
+        output_path,
+        "--max-pages",
+        str(req.max_pages),
+        "--progress",
+        progress_path,
+    ]
+    if req.max_items:
+        command.extend(["--max-items", str(req.max_items)])
+    if req.headless:
+        command.append("--headless")
+
+    with open(log_path, "a", encoding="utf-8") as log_fp:
+        proc = subprocess.Popen(
+            command,
+            stdout=log_fp,
+            stderr=log_fp,
+            cwd="/root/supplier-scraper-main",
+        )
+
+    job = {
+        "accepted": True,
+        "pid": proc.pid,
+        "display_name": display_name,
+        "output_name": base_name,
+        "output_path": output_path,
+        "log_path": log_path,
+        "progress_path": progress_path,
+        "search_url": req.search_url,
+        "max_pages": req.max_pages,
+        "max_items": req.max_items,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _write_json(KITAMURA_EXTRACT_ACTIVE_STATE, job)
+    _append_kitamura_history(job)
+    job["status"] = "running"
+    job["filename"] = os.path.basename(output_path)
+    job["download_url"] = None
+    return job
+
+
+
+
+def _is_valid_surugaya_search_url(value: str) -> bool:
+    try:
+        parsed = urlparse(value)
+    except Exception:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    return parsed.netloc == "www.suruga-ya.jp" and parsed.path == "/search"
+
+
+def _enrich_surugaya_extract_job(item: dict[str, Any]) -> dict[str, Any]:
+    job = dict(item)
+    job["status"] = _job_status(job)
+    output_path = job.get("output_path") or ""
+    filename = _history_filename(job)
+    job["filename"] = filename
+    job["download_url"] = f"/api/extract/surugaya/download/{filename}" if filename and os.path.exists(output_path) else None
+    progress = _read_progress(job.get("progress_path"))
+    if progress:
+        job["progress"] = progress
+    return job
+
+
+def _load_surugaya_active_job() -> dict | None:
+    _surugaya_extract_state_dir()
+    job = _read_json(SURUGAYA_EXTRACT_ACTIVE_STATE, None)
+    if not isinstance(job, dict):
+        return None
+    if _job_status(job) != "running":
+        _write_json(SURUGAYA_EXTRACT_ACTIVE_STATE, {})
+        return None
+    return _enrich_surugaya_extract_job(job)
+
+
+def _load_surugaya_history() -> list[dict]:
+    _surugaya_extract_state_dir()
+    rows = _read_json(SURUGAYA_EXTRACT_HISTORY_STATE, [])
+    if not isinstance(rows, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in rows[:100]:
+        if not isinstance(row, dict):
+            continue
+        enriched = _enrich_surugaya_extract_job(row)
+        progress = enriched.get("progress") or {}
+        enriched["extracted_count"] = progress.get("extracted_count", row.get("extracted_count", 0))
+        enriched["skip_count"] = progress.get("skip_count", row.get("skip_count", 0))
+        enriched["page"] = progress.get("page", row.get("page", 0))
+        out.append(enriched)
+    return out
+
+
+def _append_surugaya_history(job: dict) -> None:
+    history = _read_json(SURUGAYA_EXTRACT_HISTORY_STATE, [])
+    if not isinstance(history, list):
+        history = []
+    history = [row for row in history if row.get("output_path") != job.get("output_path")]
+    history.insert(0, job)
+    _write_json(SURUGAYA_EXTRACT_HISTORY_STATE, history[:100])
+
+
+@app.get("/api/extract/surugaya/status")
+def surugaya_extract_status() -> dict:
+    return {"active_job": _load_surugaya_active_job()}
+
+
+@app.get("/api/extract/surugaya/history")
+def surugaya_extract_history() -> dict:
+    return {"items": _load_surugaya_history()}
+
+
+@app.get("/api/extract/surugaya/download/{filename}")
+def surugaya_extract_download(filename: str):
+    _surugaya_extract_state_dir()
+    file_path = os.path.join(SURUGAYA_EXTRACT_OUTPUT_DIR, filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="file not found")
+    return FileResponse(file_path, filename=filename, media_type="text/csv")
+
+
+@app.delete("/api/extract/surugaya/history/{filename}")
+def surugaya_extract_delete(filename: str) -> dict:
+    _surugaya_extract_state_dir()
+    history = _read_json(SURUGAYA_EXTRACT_HISTORY_STATE, [])
+    if not isinstance(history, list):
+        history = []
+    target = None
+    remaining = []
+    for row in history:
+        if os.path.basename(row.get("output_path") or "") == filename:
+            target = row
+        else:
+            remaining.append(row)
+    if not target:
+        raise HTTPException(status_code=404, detail="history not found")
+    active = _load_surugaya_active_job()
+    if active and os.path.basename(active.get("output_path") or "") == filename:
+        raise HTTPException(status_code=409, detail="extract job is running")
+    for path in (target.get("output_path"), target.get("log_path"), target.get("progress_path")):
+        if path and os.path.exists(path):
+            os.remove(path)
+    _write_json(SURUGAYA_EXTRACT_HISTORY_STATE, remaining)
+    return {"deleted": True, "filename": filename}
+
+
+@app.post("/api/extract/surugaya/start")
+def surugaya_extract_start(req: SurugayaExtractRequest) -> dict:
+    if not _is_valid_surugaya_search_url(req.search_url):
+        raise HTTPException(status_code=400, detail="invalid surugaya search url")
+    if _load_surugaya_active_job():
+        raise HTTPException(status_code=409, detail="extract already running")
+    display_name = (req.display_name or "").strip()
+    if not display_name:
+        raise HTTPException(status_code=400, detail="display_name is required")
+    _surugaya_extract_state_dir()
+    base_name = _sanitize_output_name(display_name) or 'surugaya_extract'
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    output_name = f"{base_name}_{timestamp}.csv"
+    output_path = os.path.join(SURUGAYA_EXTRACT_OUTPUT_DIR, output_name)
+    log_path = os.path.join(SURUGAYA_EXTRACT_LOG_DIR, f"surugaya_extract_{timestamp}.log")
+    progress_path = os.path.join(SURUGAYA_EXTRACT_OUTPUT_DIR, f"surugaya_extract_{timestamp}.progress.json")
+    command = ["python3", SURUGAYA_EXTRACT_SCRIPT, "--search-url", req.search_url, "--output", output_path, "--max-pages", str(req.max_pages), "--progress", progress_path]
+    if req.max_items:
+        command.extend(["--max-items", str(req.max_items)])
+    if req.headless:
+        command.append("--headless")
+    with open(log_path, 'a', encoding='utf-8') as log_fp:
+        proc = subprocess.Popen(command, stdout=log_fp, stderr=log_fp, cwd="/root/supplier-scraper-main")
+    job = {"accepted": True, "pid": proc.pid, "display_name": display_name, "output_name": base_name, "output_path": output_path, "log_path": log_path, "progress_path": progress_path, "search_url": req.search_url, "max_pages": req.max_pages, "max_items": req.max_items, "started_at": datetime.now(timezone.utc).isoformat()}
+    _write_json(SURUGAYA_EXTRACT_ACTIVE_STATE, job)
+    _append_surugaya_history(job)
+    job["status"] = "running"
+    job["filename"] = os.path.basename(output_path)
+    job["download_url"] = None
+    return job
+
+
 @app.get('/api/overview')
 def overview() -> dict:
     try:
-        runs_data = _fetch_runs(limit=500)
-        if runs_data:
+        def build() -> dict:
+            runs_data = _fetch_runs(limit=500)
+            if runs_data:
+                now_jst = datetime.now(JST).date()
+                latest_by_site: dict[str, dict[str, Any]] = {}
+                today_runs = 0
+                today_failures = 0
+                run_stats: dict[str, dict[str, int]] = {}
+                for run in runs_data:
+                    site = run.get("site") or "unknown"
+                    started_at = run.get("started_at")
+                    raw_status = run.get("status") or "unknown"
+                    status = "success" if raw_status == "success" else ("running" if raw_status == "running" else "error")
+                    stat = run_stats.setdefault(site, {"recent_runs": 0, "recent_success": 0})
+                    if stat["recent_runs"] < 7:
+                        stat["recent_runs"] += 1
+                        if raw_status == "success":
+                            stat["recent_success"] += 1
+                    if started_at:
+                        dt_obj = _parse_ts(started_at)
+                        if not dt_obj:
+                            continue
+                        dt = dt_obj.astimezone(JST)
+                        if dt.date() == now_jst:
+                            today_runs += 1
+                            if status == "error":
+                                today_failures += 1
+                    prev = latest_by_site.get(site)
+                    if not prev or (started_at and started_at > (prev.get("last_run") or "")):
+                        latest_by_site[site] = {
+                            "site": site,
+                            "latest_status": status,
+                            "last_run": started_at,
+                            "last_run_status": raw_status,
+                            "run_success_rate": 0,
+                            "success_rate": 100 if raw_status == "success" else (70 if raw_status == "running" else 0),
+                        }
+                for site, stat in run_stats.items():
+                    if site in latest_by_site:
+                        latest_by_site[site]["run_success_rate"] = round((stat["recent_success"] / stat["recent_runs"]) * 100) if stat["recent_runs"] else 0
+                return {
+                    "sites": sorted(latest_by_site.values(), key=lambda x: x["site"]),
+                    "today_runs": today_runs,
+                    "today_failures": today_failures,
+                    "source": "supabase_scrape_runs",
+                }
+
+            items = _fetch_items()
+            if not items:
+                return {
+                    "sites": [],
+                    "today_runs": 0,
+                    "today_failures": 0,
+                    "source": "fallback_empty",
+                }
+
             now_jst = datetime.now(JST).date()
             latest_by_site: dict[str, dict[str, Any]] = {}
             today_runs = 0
             today_failures = 0
-            for run in runs_data:
-                site = run.get("site") or "unknown"
-                started_at = run.get("started_at")
-                status = "success" if run.get("status") == "success" else "error"
-                if started_at:
-                    dt = datetime.fromisoformat(started_at.replace("Z", "+00:00")).astimezone(JST)
+
+            counters: dict[str, dict[str, int]] = {}
+            for row in items:
+                site = _site_from_url(row.get("stocking_url"))
+                scraped_at = row.get("scraped_updated_at")
+                status = _status_to_dashboard(row.get("scraped_stock_status"))
+                bucket = counters.setdefault(site, {"total": 0, "known": 0})
+                bucket["total"] += 1
+                if status != "error":
+                    bucket["known"] += 1
+                if scraped_at:
+                    dt_obj = _parse_ts(scraped_at)
+                    if not dt_obj:
+                        continue
+                    dt = dt_obj.astimezone(JST)
                     if dt.date() == now_jst:
                         today_runs += 1
                         if status == "error":
                             today_failures += 1
+
                 prev = latest_by_site.get(site)
-                if not prev or (started_at and started_at > (prev.get("last_run") or "")):
-                    latest_by_site[site] = {"site": site, "latest_status": status, "last_run": started_at}
+                if not prev:
+                    latest_by_site[site] = {
+                        "site": site,
+                        "latest_status": status,
+                        "last_run": scraped_at,
+                        "last_run_status": status,
+                    }
+                    continue
+                prev_ts = prev.get("last_run")
+                if scraped_at and (not prev_ts or scraped_at > prev_ts):
+                    latest_by_site[site] = {
+                        "site": site,
+                        "latest_status": status,
+                        "last_run": scraped_at,
+                        "last_run_status": status,
+                    }
+            for site, count in counters.items():
+                if site in latest_by_site:
+                    latest_by_site[site]["success_rate"] = round((count["known"] / count["total"]) * 100) if count["total"] else 0
+                    latest_by_site[site]["run_success_rate"] = None
+
             return {
                 "sites": sorted(latest_by_site.values(), key=lambda x: x["site"]),
                 "today_runs": today_runs,
                 "today_failures": today_failures,
-                "source": "supabase_scrape_runs",
+                "source": "supabase_items",
             }
 
-        items = _fetch_items()
-        if not items:
-            return {
-                "sites": [],
-                "today_runs": 0,
-                "today_failures": 0,
-                "source": "fallback_empty",
-            }
-
-        now_jst = datetime.now(JST).date()
-        latest_by_site: dict[str, dict[str, Any]] = {}
-        today_runs = 0
-        today_failures = 0
-
-        for row in items:
-            site = _site_from_url(row.get("stocking_url"))
-            scraped_at = row.get("scraped_updated_at")
-            status = _status_to_dashboard(row.get("scraped_stock_status"))
-            if scraped_at:
-                dt = datetime.fromisoformat(scraped_at.replace("Z", "+00:00")).astimezone(JST)
-                if dt.date() == now_jst:
-                    today_runs += 1
-                    if status == "error":
-                        today_failures += 1
-
-            prev = latest_by_site.get(site)
-            if not prev:
-                latest_by_site[site] = {"site": site, "latest_status": status, "last_run": scraped_at}
-                continue
-            prev_ts = prev.get("last_run")
-            if scraped_at and (not prev_ts or scraped_at > prev_ts):
-                latest_by_site[site] = {"site": site, "latest_status": status, "last_run": scraped_at}
-
-        return {
-            "sites": sorted(latest_by_site.values(), key=lambda x: x["site"]),
-            "today_runs": today_runs,
-            "today_failures": today_failures,
-            "source": "supabase_items",
-        }
+        return _cached("overview", CACHE_TTL_OVERVIEW, build)
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(
             status_code=500,
@@ -307,50 +1074,56 @@ def errors() -> dict:
 
 @app.get("/api/system/memory")
 def system_memory() -> dict:
-    vm = psutil.virtual_memory()
-    sm = psutil.swap_memory()
-    return {
-        "memory": {
-            "total_mb": round(vm.total / 1024 / 1024, 2),
-            "used_mb": round(vm.used / 1024 / 1024, 2),
-            "available_mb": round(vm.available / 1024 / 1024, 2),
-            "percent": vm.percent,
-        },
-        "swap": {
-            "total_mb": round(sm.total / 1024 / 1024, 2),
-            "used_mb": round(sm.used / 1024 / 1024, 2),
-            "free_mb": round(sm.free / 1024 / 1024, 2),
-            "percent": sm.percent,
-        },
-    }
+    def build() -> dict:
+        vm = psutil.virtual_memory()
+        sm = psutil.swap_memory()
+        return {
+            "memory": {
+                "total_mb": round(vm.total / 1024 / 1024, 2),
+                "used_mb": round(vm.used / 1024 / 1024, 2),
+                "available_mb": round(vm.available / 1024 / 1024, 2),
+                "percent": vm.percent,
+            },
+            "swap": {
+                "total_mb": round(sm.total / 1024 / 1024, 2),
+                "used_mb": round(sm.used / 1024 / 1024, 2),
+                "free_mb": round(sm.free / 1024 / 1024, 2),
+                "percent": sm.percent,
+            },
+        }
+
+    return _cached("system_memory", CACHE_TTL_MEMORY, build)
 
 
 @app.get("/api/system/schedule")
 def system_schedule() -> dict:
     try:
-        proc = subprocess.run(
-            ["crontab", "-l"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        raw = proc.stdout if proc.returncode == 0 else ""
-        lines = [ln.strip() for ln in raw.splitlines() if ln.strip() and not ln.strip().startswith("#")]
-        items: list[dict[str, str]] = []
-        for ln in lines:
-            parts = ln.split(maxsplit=5)
-            if len(parts) < 6:
-                continue
-            schedule = " ".join(parts[:5])
-            command = parts[5]
-            if (
-                "run_all_scrapes.sh" in command
-                or "mcp_watchdog.sh" in command
-                or "mcp_run_site.sh" in command
-            ):
-                items.append({"schedule": schedule, "command": command})
-        return {"timezone": "Asia/Tokyo", "items": items}
+        def build() -> dict:
+            proc = subprocess.run(
+                ["crontab", "-l"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            raw = proc.stdout if proc.returncode == 0 else ""
+            lines = [ln.strip() for ln in raw.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+            items: list[dict[str, str]] = []
+            for ln in lines:
+                parts = ln.split(maxsplit=5)
+                if len(parts) < 6:
+                    continue
+                schedule = " ".join(parts[:5])
+                command = parts[5]
+                if (
+                    "run_all_scrapes.sh" in command
+                    or "mcp_watchdog.sh" in command
+                    or "mcp_run_site.sh" in command
+                ):
+                    items.append({"schedule": schedule, "command": command})
+            return {"timezone": "Asia/Tokyo", "items": items}
+
+        return _cached("system_schedule", CACHE_TTL_SCHEDULE, build)
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(status_code=500, content={"error": "schedule_fetch_failed", "message": str(exc)})
 
@@ -358,76 +1131,75 @@ def system_schedule() -> dict:
 @app.get("/api/mcp/summary")
 def mcp_summary() -> dict:
     try:
-        runs_data = _fetch_runs(limit=500)
-        now_utc = datetime.now(timezone.utc)
-        since_24h = now_utc - timedelta(hours=24)
-        success_24h = 0
-        failed_24h = 0
-        running = 0
-        latest_by_site: dict[str, dict[str, Any]] = {}
-        error_counter: Counter[str] = Counter()
-        error_last_seen: dict[str, str] = {}
+        def build() -> dict:
+            runs_data = _fetch_runs(limit=500)
+            now_utc = datetime.now(timezone.utc)
+            since_24h = now_utc - timedelta(hours=24)
+            success_24h = 0
+            failed_24h = 0
+            running = 0
+            latest_by_site: dict[str, dict[str, Any]] = {}
+            error_counter: Counter[str] = Counter()
+            error_last_seen: dict[str, str] = {}
 
-        for row in runs_data:
-            site = row.get("site") or "unknown"
-            status = row.get("status") or "unknown"
-            started_at = row.get("started_at")
-            finished_at = row.get("finished_at")
-            error_summary = row.get("error_summary") or ""
+            for row in runs_data:
+                site = row.get("site") or "unknown"
+                status = row.get("status") or "unknown"
+                started_at = row.get("started_at")
+                finished_at = row.get("finished_at")
+                error_summary = row.get("error_summary") or ""
 
-            ts = None
-            if started_at:
-                try:
-                    ts = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
-                except ValueError:
-                    ts = None
-                if ts and ts >= since_24h:
-                    if status == "success":
-                        success_24h += 1
-                    elif status == "failed":
-                        failed_24h += 1
+                if started_at:
+                    ts = _parse_ts(started_at)
+                    if ts and ts >= since_24h:
+                        if status == "success":
+                            success_24h += 1
+                        elif status == "failed":
+                            failed_24h += 1
 
-            if status == "running":
-                running += 1
+                if status == "running":
+                    running += 1
 
-            prev = latest_by_site.get(site)
-            if not prev or ((started_at or "") > (prev.get("started_at") or "")):
-                latest_by_site[site] = {
-                    "site": site,
-                    "status": status,
-                    "started_at": started_at,
-                    "finished_at": finished_at,
-                    "error_summary": error_summary,
-                }
+                prev = latest_by_site.get(site)
+                if not prev or ((started_at or "") > (prev.get("started_at") or "")):
+                    latest_by_site[site] = {
+                        "site": site,
+                        "status": status,
+                        "started_at": started_at,
+                        "finished_at": finished_at,
+                        "error_summary": error_summary,
+                    }
 
-            if status == "failed":
-                key = error_summary[:120] if error_summary else "failed_without_summary"
-                error_counter[key] += 1
-                seen_at = finished_at or started_at or ""
-                if seen_at and seen_at > error_last_seen.get(key, ""):
-                    error_last_seen[key] = seen_at
+                if status == "failed":
+                    key = error_summary[:120] if error_summary else "failed_without_summary"
+                    error_counter[key] += 1
+                    seen_at = finished_at or started_at or ""
+                    if seen_at and seen_at > error_last_seen.get(key, ""):
+                        error_last_seen[key] = seen_at
 
-        proc = _process_counts()
-        vm = psutil.virtual_memory()
-        return {
-            "kpis": {
-                "success_24h": success_24h,
-                "failed_24h": failed_24h,
-                "running_runs": running,
-                "sites_tracked": len(latest_by_site),
-            },
-            "latest_by_site": sorted(latest_by_site.values(), key=lambda x: x["site"]),
-            "top_errors": [
-                {"message": m, "count": c, "last_seen_at": error_last_seen.get(m)}
-                for m, c in error_counter.most_common(5)
-            ],
-            "server": {
-                "cpu_percent": psutil.cpu_percent(interval=0.2),
-                "memory_percent": vm.percent,
-                "chrome_processes": proc["chrome_processes"],
-                "runner_processes": proc["runner_processes"],
-            },
-        }
+            proc = _process_counts()
+            vm = psutil.virtual_memory()
+            return {
+                "kpis": {
+                    "success_24h": success_24h,
+                    "failed_24h": failed_24h,
+                    "running_runs": running,
+                    "sites_tracked": len(latest_by_site),
+                },
+                "latest_by_site": sorted(latest_by_site.values(), key=lambda x: x["site"]),
+                "top_errors": [
+                    {"message": m, "count": c, "last_seen_at": error_last_seen.get(m)}
+                    for m, c in error_counter.most_common(5)
+                ],
+                "server": {
+                    "cpu_percent": psutil.cpu_percent(interval=0.2),
+                    "memory_percent": vm.percent,
+                    "chrome_processes": proc["chrome_processes"],
+                    "runner_processes": proc["runner_processes"],
+                },
+            }
+
+        return _cached("mcp_summary", CACHE_TTL_MCP_SUMMARY, build)
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(status_code=500, content={"error": "mcp_summary_failed", "message": str(exc)})
 
@@ -444,31 +1216,34 @@ def validator_summary() -> dict:
         "status": "unknown",
     }
     try:
-        if not os.path.exists(VALIDATOR_LOG_PATH):
+        def build() -> dict:
+            if not os.path.exists(VALIDATOR_LOG_PATH):
+                return fallback
+            with open(VALIDATOR_LOG_PATH, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()[-300:]
+            for line in reversed(lines):
+                text = line.strip()
+                if not text:
+                    continue
+                try:
+                    row = json.loads(text)
+                except json.JSONDecodeError:
+                    continue
+                if row.get("message") != "validator run finished":
+                    continue
+                retried = row.get("retried") or []
+                skipped = row.get("skipped") or []
+                return {
+                    "checked_at": row.get("checked_at"),
+                    "failed_recent": int(row.get("failed_recent") or 0),
+                    "retried_count": len(retried),
+                    "skipped_count": len(skipped),
+                    "retried": retried[:10],
+                    "skipped": skipped[:10],
+                    "status": "ok",
+                }
             return fallback
-        with open(VALIDATOR_LOG_PATH, "r", encoding="utf-8", errors="ignore") as f:
-            lines = f.readlines()[-300:]
-        for line in reversed(lines):
-            text = line.strip()
-            if not text:
-                continue
-            try:
-                row = json.loads(text)
-            except json.JSONDecodeError:
-                continue
-            if row.get("message") != "validator run finished":
-                continue
-            retried = row.get("retried") or []
-            skipped = row.get("skipped") or []
-            return {
-                "checked_at": row.get("checked_at"),
-                "failed_recent": int(row.get("failed_recent") or 0),
-                "retried_count": len(retried),
-                "skipped_count": len(skipped),
-                "retried": retried[:10],
-                "skipped": skipped[:10],
-                "status": "ok",
-            }
-        return fallback
+
+        return _cached("validator_summary", CACHE_TTL_VALIDATOR, build)
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(status_code=500, content={"error": "validator_summary_failed", "message": str(exc)})

@@ -30,9 +30,8 @@ def main() -> int:
         lock = acquire_run_lock(args.site)
     except LockBusyError as exc:
         msg = str(exc)
-        json_log("warning", "skip run: lock busy", site=args.site, error=msg)
-        notify_chatwork(build_failure_message(site=args.site, run_id=run_id, error=f"lock busy: {msg}"))
-        return 2
+        json_log("warning", "skip run: already running", site=args.site, error=msg)
+        return 0
 
     json_log("info", "run started", run_id=run_id, site=args.site)
     try:

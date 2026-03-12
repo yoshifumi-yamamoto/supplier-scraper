@@ -12,11 +12,11 @@ load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 TABLE_NAME = "items"
-
-PAGE_SIZE = int(os.getenv("SUPABASE_PAGE_SIZE", 50))
+PAGE_SIZE = int(os.getenv("SUPABASE_PAGE_SIZE", 200))
 FETCH_MAX_RETRIES = int(os.getenv("FETCH_MAX_RETRIES", 5))
 FETCH_BACKOFF_BASE = float(os.getenv("FETCH_BACKOFF_BASE", 2.0))
 MAX_PAGES = int(os.getenv("MAX_PAGES", 0))
+KITAMURA_HOST = os.getenv("KITAMURA_HOST", "shop.kitamura.jp")
 
 
 def fetch_data_from_supabase():
@@ -32,13 +32,13 @@ def fetch_data_from_supabase():
 
     while True:
         if MAX_PAGES > 0 and page >= MAX_PAGES:
-            print(f"[INFO] MAX_PAGES={MAX_PAGES} に到達したため取得を打ち切ります")
+            print(f"[INFO] MAX_PAGES={MAX_PAGES} reached")
             break
 
         params = {
             "select": "ebay_item_id,ebay_user_id,stocking_url,listing_status",
             "listing_status": "eq.Active",
-            "stocking_url": "ilike.*mercari.com*",
+            "stocking_url": f"ilike.*{KITAMURA_HOST}*",
             "order": "ebay_item_id.asc",
             "limit": str(PAGE_SIZE),
         }
@@ -50,22 +50,19 @@ def fetch_data_from_supabase():
             try:
                 response = requests.get(url, headers=headers, params=params, timeout=45)
                 if response.status_code >= 500:
-                    body_preview = response.text[:300].replace("\n", " ")
+                    preview = response.text[:300].replace("\n", " ")
                     raise requests.HTTPError(
-                        f"Supabase {response.status_code} on page {page + 1}: {body_preview}",
+                        f"Supabase {response.status_code} on page {page + 1}: {preview}",
                         response=response,
                     )
                 response.raise_for_status()
                 data = response.json()
                 break
-            except Exception as e:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 if attempt == FETCH_MAX_RETRIES - 1:
                     raise
                 sleep_sec = FETCH_BACKOFF_BASE * (2 ** attempt)
-                print(
-                    f"[WARN] fetch retry {attempt + 1}/{FETCH_MAX_RETRIES} failed "
-                    f"(page={page + 1}): {e} / sleep={sleep_sec:.1f}s"
-                )
+                print(f"[WARN] fetch retry {attempt + 1}/{FETCH_MAX_RETRIES} failed (page={page + 1}): {exc} / sleep={sleep_sec:.1f}s")
                 time.sleep(sleep_sec)
 
         if not data:
@@ -73,22 +70,20 @@ def fetch_data_from_supabase():
 
         all_data.extend(data)
         last_item_id = data[-1]["ebay_item_id"]
-        print(f"[DEBUG] page={page + 1} 取得={len(data)}件（累計: {len(all_data)}件）")
+        print(f"[DEBUG] page={page + 1} fetched={len(data)} total={len(all_data)}")
 
         if len(data) < PAGE_SIZE:
             break
-
         page += 1
 
     return all_data
 
 
 def save_filtered_csv(data):
-    filtered = [row for row in data if "mercari.com" in row["stocking_url"]]
-
+    filtered = [row for row in data if KITAMURA_HOST in (row.get("stocking_url") or "")]
     os.makedirs("input", exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    file_path = f"input/mercari_urls_{timestamp}.csv"
+    file_path = f"input/kitamura_urls_{timestamp}.csv"
 
     with open(file_path, mode="w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(
@@ -105,22 +100,17 @@ def save_filtered_csv(data):
         writer.writeheader()
         for row in filtered:
             row["stock_status_checked"] = ""
+            row["scraped_stock_status"] = ""
             writer.writerow(row)
 
-    print(f"{len(filtered)} 件のURLを {file_path} に保存しました。")
+    print(f"{len(filtered)} urls saved to {file_path}")
 
 
 if __name__ == "__main__":
     try:
         data = fetch_data_from_supabase()
-
-        print(f"[DEBUG] Supabase から取得したデータ件数: {len(data)}")
-        if data:
-            print(f"[DEBUG] 先頭データの中身: {data[0]}")
-        else:
-            print("[DEBUG] データは0件でした")
-
+        print(f"[DEBUG] fetched rows={len(data)}")
         save_filtered_csv(data)
-    except Exception as e:  # noqa: BLE001
-        print(f"エラーが発生しました: {e}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"エラーが発生しました: {exc}")
         sys.exit(1)

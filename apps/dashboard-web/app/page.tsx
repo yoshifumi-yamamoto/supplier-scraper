@@ -1,195 +1,235 @@
-import { fetchMCPSummary, fetchOverview, fetchSystemMemory, fetchSystemSchedule, fetchValidatorSummary } from "@/lib/api";
+import { fetchMCPSummary, fetchOverview, fetchSystemMemory, fetchValidatorSummary } from "@/lib/api";
+import Link from "next/link";
 
-function statusClass(status: string) {
-  return status === "success" ? "badge badge-ok" : "badge badge-ng";
+type SiteView = {
+  site: string;
+  status: string;
+  lastRun: string | null;
+  errorSummary: string;
+  successRate: number;
+  runSuccessRate: number | null;
+  lastRunStatus: string;
+};
+
+function fmt(ts?: string | null) {
+  if (!ts) return "-";
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return ts;
+  return d.toLocaleString("ja-JP", { hour12: false });
+}
+
+function pct(v: number) {
+  return `${Math.max(0, Math.min(100, Math.round(v)))}%`;
+}
+
+function siteStatus(status: string) {
+  if (status === "success") return { label: "正常", tone: "ok" };
+  if (status === "running") return { label: "稼働中", tone: "warn" };
+  return { label: "エラー", tone: "ng" };
+}
+
+function runLabel(status: string) {
+  if (status === "success") return "成功";
+  if (status === "running") return "実行中";
+  if (status === "failed" || status === "error") return "失敗";
+  return "不明";
 }
 
 export default async function Page() {
   const overview = await fetchOverview();
   const systemMemory = await fetchSystemMemory();
   const mcp = await fetchMCPSummary();
-  const schedule = await fetchSystemSchedule();
   const validator = await fetchValidatorSummary();
 
+  const latestMap = new Map(mcp.latest_by_site.map((v) => [v.site, v]));
+  const overviewMap = new Map(overview.sites.map((v) => [v.site, v]));
+  const knownSites = ["mercari", "yahoofleama", "secondstreet", "yafuoku", "rakuma", "hardoff", "yodobashi", "kitamura"];
+  const siteNames = Array.from(new Set([...knownSites, ...overview.sites.map((s) => s.site), ...mcp.latest_by_site.map((s) => s.site)]));
+  const sites: SiteView[] = siteNames.map((name) => {
+    const ov = overviewMap.get(name);
+    const latest = latestMap.get(name);
+    return {
+      site: name,
+      status: latest?.status ?? ov?.latest_status ?? "unknown",
+      lastRun: latest?.finished_at ?? latest?.started_at ?? ov?.last_run ?? null,
+      errorSummary: latest?.error_summary ?? "",
+      successRate: ov?.success_rate ?? (latest?.status === "success" ? 100 : latest?.status === "running" ? 70 : 0),
+      runSuccessRate: ov?.run_success_rate ?? null,
+      lastRunStatus: ov?.last_run_status ?? latest?.status ?? "unknown",
+    };
+  });
+
+  const totalSites = sites.length;
+  const okSites = sites.filter((s) => s.status === "success").length;
+  const ngSites = sites.filter((s) => s.status !== "success").length;
+  const health = totalSites === 0 ? 0 : Math.round((okSites / totalSites) * 100);
+
   return (
-    <main className="container">
-      <h1>Supplier Scraper Dashboard</h1>
-      <p>統合ランナーの稼働状況を表示します。</p>
+    <main className="dashboard">
+      <header className="topbar">
+        <div className="brand">
+          <div className="brand-icon">S</div>
+          <div>
+            <h1>BaySync Scraper Dashboard</h1>
+            <p>在庫スクレイピングシステム監視</p>
+          </div>
+        </div>
+        <div className="top-tags">
+          <span className="tag tag-live">LIVE DATA</span>
+          <span className="tag">{totalSites}サイト監視中</span>
+          <span className={`tag ${ngSites === 0 ? "tag-ok" : "tag-ng"}`}>
+            {ngSites === 0 ? "システム稼働中" : "要対応"}
+          </span>
+        </div>
+      </header>
 
-      <section className="grid">
-        <div className="card">
-          <div className="label">Today Runs</div>
-          <div className="value">{overview.today_runs}</div>
-        </div>
-        <div className="card">
-          <div className="label">Today Failures</div>
-          <div className="value">{overview.today_failures}</div>
-        </div>
-        <div className="card">
-          <div className="label">Tracked Sites</div>
-          <div className="value">{overview.sites.length}</div>
-        </div>
-        <div className="card">
-          <div className="label">Memory Used</div>
-          <div className="value">{systemMemory.memory.percent}%</div>
-        </div>
-        <div className="card">
-          <div className="label">Memory Available</div>
-          <div className="value">{Math.round(systemMemory.memory.available_mb)}MB</div>
-        </div>
-        <div className="card">
-          <div className="label">Swap Used</div>
-          <div className="value">{systemMemory.swap.percent}%</div>
-        </div>
+      <section className="kpi-grid">
+        <article className="kpi-card kpi-danger">
+          <p>サイト正常率</p>
+          <h2>{pct(health)}</h2>
+        </article>
+        <article className="kpi-card">
+          <p>監視アイテム総数</p>
+          <h2>{mcp.kpis.sites_tracked || totalSites}</h2>
+        </article>
+        <article className="kpi-card">
+          <p>正常稼働</p>
+          <h2>{okSites}</h2>
+        </article>
+        <article className="kpi-card">
+          <p>エラー発生</p>
+          <h2>{ngSites}</h2>
+        </article>
+        <article className="kpi-card">
+          <p>メモリ使用率</p>
+          <h2>{pct(systemMemory.memory.percent)}</h2>
+        </article>
+        <article className="kpi-card">
+          <p>Swap使用率</p>
+          <h2>{pct(systemMemory.swap.percent)}</h2>
+        </article>
       </section>
 
-      <h2 className="section-title">Operations</h2>
-      <section className="grid">
-        <div className="card">
-          <div className="label">MCP Success (24h)</div>
-          <div className="value">{mcp.kpis.success_24h}</div>
-        </div>
-        <div className="card">
-          <div className="label">MCP Failed (24h)</div>
-          <div className="value">{mcp.kpis.failed_24h}</div>
-        </div>
-        <div className="card">
-          <div className="label">MCP Running</div>
-          <div className="value">{mcp.kpis.running_runs}</div>
-        </div>
-        <div className="card">
-          <div className="label">Server CPU</div>
-          <div className="value">{mcp.server.cpu_percent}%</div>
-        </div>
-        <div className="card">
-          <div className="label">Chrome Processes</div>
-          <div className="value">{mcp.server.chrome_processes}</div>
-        </div>
-        <div className="card">
-          <div className="label">Runner Processes</div>
-          <div className="value">{mcp.server.runner_processes}</div>
-        </div>
-        <div className="card">
-          <div className="label">Validator Failed Recent</div>
-          <div className="value">{validator.failed_recent}</div>
-        </div>
-        <div className="card">
-          <div className="label">Validator Retried</div>
-          <div className="value">{validator.retried_count}</div>
-        </div>
-        <div className="card">
-          <div className="label">Validator Last Check</div>
-          <div className="value">{validator.checked_at ? validator.checked_at.slice(11, 19) : "-"}</div>
-        </div>
+      <section className="site-grid">
+        {sites.map((site) => {
+          const st = siteStatus(site.status);
+          return (
+            <article key={site.site} className={`site-card tone-${st.tone}`}>
+              <div className="site-head">
+                <div>
+                  <h3>{site.site}</h3>
+                  <p>{site.status}</p>
+                </div>
+                <span className={`pill pill-${st.tone}`}>{st.label}</span>
+              </div>
+
+              <div className="progress-label">
+                <span>成功率</span>
+                <span>{pct(site.successRate)}</span>
+              </div>
+              <div className="progress-track">
+                <div className="progress-bar" style={{ width: pct(site.successRate) }} />
+              </div>
+
+              <div className="site-meta">
+                <div>
+                  <span>最終実行</span>
+                  <strong>{fmt(site.lastRun)}</strong>
+                </div>
+                <div>
+                  <span>前回実行</span>
+                  <strong>{runLabel(site.lastRunStatus)}</strong>
+                </div>
+              </div>
+
+              <div className="site-meta">
+                <div>
+                  <span>直近Run成功率</span>
+                  <strong>{site.runSuccessRate == null ? "-" : pct(site.runSuccessRate)}</strong>
+                </div>
+                <div>
+                  <span>現在状態</span>
+                  <strong>{st.label}</strong>
+                </div>
+              </div>
+
+              <div className="code-line">
+                {site.errorSummary ? site.errorSummary.slice(0, 90) : "最新エラーなし"}
+              </div>
+            </article>
+          );
+        })}
       </section>
 
-      <h2 className="section-title">Top Errors</h2>
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Message</th>
-            <th>Count</th>
-            <th>Last Seen</th>
-          </tr>
-        </thead>
-        <tbody>
-          {mcp.top_errors.length === 0 ? (
-            <tr>
-              <td colSpan={3}>No recent errors</td>
-            </tr>
-          ) : (
-            mcp.top_errors.map((row) => (
-              <tr key={`${row.message}-${row.count}`}>
-                <td>{row.message}</td>
-                <td>{row.count}</td>
-                <td>{row.last_seen_at ?? "-"}</td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
+      <section className="bottom-grid">
+        <article className="panel action-panel">
+          <div className="panel-head">
+            <h3>抽出ツール</h3>
+            <span>別ページで実行</span>
+          </div>
+          <p className="action-copy">
+            Mercari の検索URLを入力して、商品情報抽出ジョブを開始します。
+          </p>
+          <Link className="extract-link-button" href="/extract/mercari">
+            Mercari抽出ページへ
+          </Link>
+        </article>
 
-      <h2 className="section-title">Validator Actions</h2>
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Type</th>
-            <th>Site</th>
-            <th>Run ID</th>
-            <th>Reason</th>
-          </tr>
-        </thead>
-        <tbody>
-          {validator.retried.length === 0 && validator.skipped.length === 0 ? (
-            <tr>
-              <td colSpan={4}>No recent validator actions</td>
-            </tr>
-          ) : (
-            <>
-              {validator.retried.map((row, idx) => (
-                <tr key={`retried-${idx}-${row.failed_run_id ?? "-"}`}>
-                  <td>retried</td>
-                  <td>{row.site ?? "-"}</td>
-                  <td>{row.failed_run_id ?? "-"}</td>
-                  <td>transient error auto-retry</td>
-                </tr>
-              ))}
-              {validator.skipped.map((row, idx) => (
-                <tr key={`skipped-${idx}-${row.run_id ?? "-"}`}>
-                  <td>skipped</td>
-                  <td>{row.site ?? "-"}</td>
-                  <td>{row.run_id ?? "-"}</td>
-                  <td>{row.reason ?? "-"}</td>
-                </tr>
-              ))}
-            </>
-          )}
-        </tbody>
-      </table>
+        <article className="panel">
+          <div className="panel-head">
+            <h3>エラーログ</h3>
+            <span>{mcp.top_errors.length}件</span>
+          </div>
+          <div className="list">
+            {mcp.top_errors.length === 0 ? (
+              <div className="list-item">直近エラーはありません</div>
+            ) : (
+              mcp.top_errors.map((row) => (
+                <div key={`${row.message}-${row.count}`} className="list-item">
+                  <p>{row.message}</p>
+                  <div>
+                    <span>x{row.count}</span>
+                    <span>{fmt(row.last_seen_at)}</span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </article>
 
-      <h2 className="section-title">Schedule</h2>
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Cron</th>
-            <th>Command</th>
-          </tr>
-        </thead>
-        <tbody>
-          {schedule.items.length === 0 ? (
-            <tr>
-              <td colSpan={2}>No schedule found</td>
-            </tr>
-          ) : (
-            schedule.items.map((row) => (
-              <tr key={`${row.schedule}-${row.command}`}>
-                <td>{row.schedule}</td>
-                <td>{row.command}</td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-
-      <h2 className="section-title">Latest Site Status</h2>
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Site</th>
-            <th>Status</th>
-            <th>Last Run</th>
-          </tr>
-        </thead>
-        <tbody>
-          {overview.sites.map((site) => (
-            <tr key={site.site}>
-              <td>{site.site}</td>
-              <td><span className={statusClass(site.latest_status)}>{site.latest_status}</span></td>
-              <td>{site.last_run ?? "-"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+        <article className="panel">
+          <div className="panel-head">
+            <h3>運用ステータス</h3>
+            <span>{fmt(validator.checked_at)}</span>
+          </div>
+          <div className="ops-grid">
+            <div className="ops-card">
+              <p>MCP Success (24h)</p>
+              <h4>{mcp.kpis.success_24h}</h4>
+            </div>
+            <div className="ops-card">
+              <p>MCP Failed (24h)</p>
+              <h4>{mcp.kpis.failed_24h}</h4>
+            </div>
+            <div className="ops-card">
+              <p>CPU</p>
+              <h4>{pct(mcp.server.cpu_percent)}</h4>
+            </div>
+            <div className="ops-card">
+              <p>Chrome</p>
+              <h4>{mcp.server.chrome_processes}</h4>
+            </div>
+            <div className="ops-card">
+              <p>Validator Retry</p>
+              <h4>{validator.retried_count}</h4>
+            </div>
+            <div className="ops-card">
+              <p>Today Failures</p>
+              <h4>{overview.today_failures}</h4>
+            </div>
+          </div>
+        </article>
+      </section>
     </main>
   );
 }

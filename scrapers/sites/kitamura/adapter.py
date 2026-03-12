@@ -3,7 +3,7 @@ from scrapers.common.items import fetch_active_items_by_domain, update_item_stoc
 from scrapers.common.logging_utils import json_log
 from scrapers.common.models import ScrapeStatus
 from scrapers.common.run_store import finish_step, start_step
-from scrapers.sites.hardoff.checker import check_stock_status
+from scrapers.sites.kitamura.checker import check_stock_status
 
 
 def _to_japanese(status: ScrapeStatus) -> str:
@@ -17,24 +17,24 @@ def _to_japanese(status: ScrapeStatus) -> str:
 def run_pipeline(run_id: str) -> dict:
     fetch_step = start_step(run_id=run_id, step_name='fetch_items')
     try:
-        items = fetch_active_items_by_domain('netmall.hardoff.co.jp')
+        items = fetch_active_items_by_domain('shop.kitamura.jp')
         finish_step(fetch_step, status='success', message=f'fetched={len(items)}')
     except Exception as exc:  # noqa: BLE001
         finish_step(fetch_step, status='failed', message=str(exc))
         return {
             'run_id': run_id,
-            'site': 'hardoff',
+            'site': 'kitamura',
             'status': ScrapeStatus.ERROR.value,
             'message': f'fetch failed: {exc}',
         }
 
     if not items:
-        json_log('info', 'hardoff no target items', run_id=run_id, site='hardoff')
+        json_log('info', 'kitamura no target items', run_id=run_id, site='kitamura')
         return {
             'run_id': run_id,
-            'site': 'hardoff',
+            'site': 'kitamura',
             'status': 'success',
-            'message': 'hardoff pipeline completed: 0 items',
+            'message': 'kitamura pipeline completed: 0 items',
         }
 
     driver = build_chrome(headless=True)
@@ -46,10 +46,11 @@ def run_pipeline(run_id: str) -> dict:
     try:
         for row in items:
             status = ScrapeStatus.UNKNOWN
+            target_url = row.get('stocking_url') or ''
             try:
-                status, _ = check_stock_status(driver, row.get('stocking_url') or '')
+                status, target_url = check_stock_status(driver, target_url)
             except Exception as exc:  # noqa: BLE001
-                json_log('warning', 'hardoff check failed', site='hardoff', ebay_item_id=row.get('ebay_item_id'), error=str(exc))
+                json_log('warning', 'kitamura check failed', site='kitamura', ebay_item_id=row.get('ebay_item_id'), error=str(exc))
                 status = ScrapeStatus.UNKNOWN
             jp = _to_japanese(status)
             update_item_stock(row['ebay_item_id'], jp, is_scraped=True)
@@ -65,7 +66,7 @@ def run_pipeline(run_id: str) -> dict:
         finish_step(step_id, status='failed', message=str(exc))
         return {
             'run_id': run_id,
-            'site': 'hardoff',
+            'site': 'kitamura',
             'status': ScrapeStatus.ERROR.value,
             'message': f'check failed: {exc}',
         }
@@ -77,7 +78,7 @@ def run_pipeline(run_id: str) -> dict:
 
     return {
         'run_id': run_id,
-        'site': 'hardoff',
+        'site': 'kitamura',
         'status': 'success',
-        'message': f'hardoff pipeline completed: checked={checked} in={in_stock} out={out_of_stock} unknown={unknown}',
+        'message': f'kitamura pipeline completed: checked={checked} in={in_stock} out={out_of_stock} unknown={unknown}',
     }

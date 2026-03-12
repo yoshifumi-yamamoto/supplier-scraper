@@ -109,6 +109,33 @@ def bulk_update_supabase(buffer):
             logging.error(f"[ERROR] Supabase更新エラー: {ebay_item_id} → {e}")
 
 
+def detect_mercari_shops_status(driver):
+    out_of_stock_tag = driver.find_elements(By.XPATH, '//p[@data-testid="out-of-stock"]')
+    if out_of_stock_tag:
+        return "在庫なし", "shops_oos_tag"
+
+    body_text = ""
+    try:
+        body_text = driver.find_element(By.TAG_NAME, "body").text
+    except Exception:
+        body_text = ""
+
+    sold_markers = ("売り切れました", "売り切れ", "SOLD", "在庫なし")
+    if any(marker in body_text for marker in sold_markers):
+        return "在庫なし", "shops_sold_marker"
+
+    purchase_elements = driver.find_elements(
+        By.XPATH,
+        '//button[normalize-space()="購入手続きへ" and not(@disabled)] | '
+        '//a[normalize-space()="購入手続きへ"]'
+    )
+    if any(el.is_displayed() for el in purchase_elements):
+        return "在庫あり", "shops_purchase_cta"
+
+    # Shops pages can contain generic copy unrelated to the product state.
+    return "不明", "shops_unknown"
+
+
 
 def scrape_file(args):
     csv_file, limit, progress_dict, total, proxy, lock = args
@@ -172,14 +199,7 @@ def scrape_file(args):
                             status = "在庫あり"
                             pattern = "1"
                         else:
-                            # shops用: 在庫切れタグを確認
-                            has_out_of_stock_tag = driver.find_elements(By.XPATH, '//p[@data-testid="out-of-stock"]')
-                            if has_out_of_stock_tag:
-                                status = "在庫なし"
-                                pattern = "shops_oos"
-                            else:
-                                status = "在庫あり"
-                                pattern = "shops_available"
+                            status, pattern = detect_mercari_shops_status(driver)
                     except TimeoutException:
                         # 以下は従来の削除済み/未発見チェック（通常商品向け）
                         has_deleted_text = driver.find_elements(By.XPATH, '//p[contains(text(), "削除されています")]')
