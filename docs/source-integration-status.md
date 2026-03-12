@@ -35,9 +35,9 @@
 
 ### 1. Server runtime still depends on old `baysync-*` paths
 - Current cron already uses `/root/supplier-scraper-main`.
-- But current systemd still loads env from old path:
+- Current systemd now loads env from:
   - `/etc/systemd/system/supplier-mcp.service`
-  - `EnvironmentFile=/root/baysync-yodobashi-stock-scraper/.env`
+  - `EnvironmentFile=/root/supplier-scraper-main/.env`
 - Old runtime directories still exist on KAGOYA:
   - `/root/baysync-mercari-stock-scraper`
   - `/root/baysync-yafuoku-stock-scraper`
@@ -49,13 +49,12 @@
 
 ### 2. Integrated repo still hardcodes old server paths
 - `docs/mcp-server.md`
-  - still references `/root/baysync-yodobashi-stock-scraper/.env`
-  - still documents `run_all_scrapes.sh`
+  - updated to `/root/supplier-scraper-main/.env`
 - `scripts/mcp_run_site.sh`
-  - still checks `/root/run_all_scrapes.sh`
+  - legacy batch guard is now optional via `LEGACY_RUN_GUARD_PATTERN`
 - `scrapers/common/execution_guard.py`
-  - still cleans `/root/baysync-{site}-stock-scraper/tmp_chrome`
-- Legacy launcher scripts still `cd` into old directories:
+  - now cleans `legacy/<site>/tmp_chrome`
+- Legacy launcher scripts now run from repo-local paths:
   - `legacy/mercari/run_scrape.sh`
   - `legacy/yafuoku/run_scrape.sh`
   - `legacy/yahoofleama/run_scrape.sh`
@@ -63,14 +62,19 @@
   - `legacy/rakuma/run_scrape.sh`
   - `legacy/yodobashi/run_scrape.sh`
 - `legacy/mercari/run_all_scrapes.sh`
-  - still orchestrates old `/root/baysync-*` directories
+  - now orchestrates repo-local `legacy/*` scripts instead of `/root/baysync-*`
 
-### 3. Production alignment is incomplete for Mercari
+### 3. Remaining code-level dependency on legacy batch naming
+- `apps/dashboard_api/main.py`
+  - still surfaces `run_all_scrapes.sh` in schedule API output
+  - this is observational only, but should be revisited after legacy batch removal
+
+### 4. Production alignment is incomplete for Mercari
 - On KAGOYA, `supplier-scraper-main/legacy/yafuoku` and `legacy/yahoofleama` match old server copies.
 - Mercari was hotfixed in `/root/baysync-mercari-stock-scraper`, so `/root/supplier-scraper-main/legacy/mercari` is not yet guaranteed to match the live hotfix state.
 - Before deleting old server directories, Mercari changes need to be ported into `/root/supplier-scraper-main/legacy/mercari` and redeployed there.
 
-### 4. Old local repo is now archive-only candidate
+### 5. Old local repo is now archive-only candidate
 - Local old repo: `/Users/yamamotoyoshifumi/projects/ebay/supplier-scraper`
 - It still contains:
   - old standalone repos per site
@@ -80,13 +84,11 @@
 - It should not be deleted until server references in this repo are removed.
 
 ## Recommended Migration Order
-1. Move server env loading from old `baysync-*` path to `/root/supplier-scraper-main/.env` or another shared env path.
-2. Replace all hardcoded `/root/baysync-*` references in this repo with `/root/supplier-scraper-main/...`.
-3. Port the Mercari hotfix into `legacy/mercari` inside this repo.
-4. Deploy updated `supplier-scraper-main` to KAGOYA and verify:
+1. Port the Mercari hotfix into `legacy/mercari` inside this repo.
+2. Deploy updated `supplier-scraper-main` to KAGOYA and verify:
    - `supplier-mcp.service`
    - `mcp_orchestrator.sh`
    - manual run per migrated site
-5. Disable dependence on `/root/run_all_scrapes.sh`.
-6. Archive old local `supplier-scraper`.
-7. Remove old `/root/baysync-*` directories on KAGOYA only after verification.
+3. Remove legacy batch dependence entirely (`run_all_scrapes.sh` and related schedule visibility).
+4. Archive old local `supplier-scraper`.
+5. Remove old `/root/baysync-*` directories on KAGOYA only after verification.

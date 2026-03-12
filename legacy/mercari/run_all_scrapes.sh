@@ -1,4 +1,8 @@
 #!/bin/bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+LEGACY_DIR="$ROOT_DIR/legacy"
 
 LOG_DIR="/root/scrape_logs"
 mkdir -p "$LOG_DIR"
@@ -16,11 +20,15 @@ cleanup_tmp_chrome() {
   fi
 }
 
+site_dir() {
+  echo "$LEGACY_DIR/$1"
+}
+
 # ✅ Mercari
 echo "▶️ Mercari 開始"
 rm -f /tmp/mercari_done.flag
-cleanup_tmp_chrome "/root/baysync-mercari-stock-scraper"
-screen -dmS scrape_mercari_$NOW bash -c "/bin/bash /root/baysync-mercari-stock-scraper/run_scrape.sh"
+cleanup_tmp_chrome "$(site_dir mercari)"
+screen -dmS scrape_mercari_$NOW bash -c "/bin/bash $(site_dir mercari)/run_scrape.sh"
 
 echo "⏳ Mercari 終了待ち中..."
 while [ ! -f /tmp/mercari_done.flag ]; do
@@ -30,33 +38,33 @@ echo "✅ Mercari 終了検知"
 
 # ✅ Yafuoku
 echo "▶️ Yafuoku 開始"
-cleanup_tmp_chrome "/root/baysync-yafuoku-stock-scraper"
-screen -dmS scrape_yafuoku_$NOW bash -c "/bin/bash /root/baysync-yafuoku-stock-scraper/run_scrape.sh"
+cleanup_tmp_chrome "$(site_dir yafuoku)"
+screen -dmS scrape_yafuoku_$NOW bash -c "/bin/bash $(site_dir yafuoku)/run_scrape.sh"
 
 # ✅ Yahoofleama
 echo "▶️ Yahoofleama 開始"
-cleanup_tmp_chrome "/root/baysync-yahoofleama-stock-scraper"
-screen -dmS scrape_yahoofleama_$NOW bash -c "/bin/bash /root/baysync-yahoofleama-stock-scraper/run_scrape.sh"
+cleanup_tmp_chrome "$(site_dir yahoofleama)"
+screen -dmS scrape_yahoofleama_$NOW bash -c "/bin/bash $(site_dir yahoofleama)/run_scrape.sh"
 
 # ✅ Hardoff
 echo "▶️ Hardoff 開始"
-cleanup_tmp_chrome "/root/baysync-hardoff-stock-scraper"
-screen -dmS scrape_hardoff_$NOW bash -c "/bin/bash /root/baysync-hardoff-stock-scraper/run_scrape.sh"
+cleanup_tmp_chrome "$(site_dir hardoff)"
+screen -dmS scrape_hardoff_$NOW bash -c "/bin/bash $(site_dir hardoff)/run_scrape.sh"
 
 # ✅ 2ndStreet
 echo "▶️ 2ndStreet 開始"
-cleanup_tmp_chrome "/root/baysync-2ndstreet-stock-scraper"
-screen -dmS scrape_2ndstreet_$NOW bash -c "/bin/bash /root/baysync-2ndstreet-stock-scraper/run_scrape.sh"
+cleanup_tmp_chrome "$(site_dir secondstreet)"
+screen -dmS scrape_2ndstreet_$NOW bash -c "/bin/bash $(site_dir secondstreet)/run_scrape.sh"
 
 # ✅ Yodobashi
 echo "▶️ Yodobashi 開始"
-cleanup_tmp_chrome "/root/baysync-yodobashi-stock-scraper"
-screen -dmS scrape_yodobashi_$NOW bash -c "/bin/bash /root/baysync-yodobashi-stock-scraper/run_scrape.sh"
+cleanup_tmp_chrome "$(site_dir yodobashi)"
+screen -dmS scrape_yodobashi_$NOW bash -c "/bin/bash $(site_dir yodobashi)/run_scrape.sh"
 
 # ✅ Rakuma
 echo "▶️ Rakuma 開始"
-cleanup_tmp_chrome "/root/baysync-rakuma-stock-scraper"
-screen -dmS scrape_rakuma_$NOW bash -c "/bin/bash /root/baysync-rakuma-stock-scraper/run_scrape.sh"
+cleanup_tmp_chrome "$(site_dir rakuma)"
+screen -dmS scrape_rakuma_$NOW bash -c "/bin/bash $(site_dir rakuma)/run_scrape.sh"
 
 # --- グローバル Chrome クリーンアップ ---
 echo "🧹 グローバル Chrome/Chromedriver プロセス掃除"

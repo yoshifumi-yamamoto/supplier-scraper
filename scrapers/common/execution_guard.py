@@ -3,6 +3,7 @@ import os
 import platform
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass
@@ -46,8 +47,9 @@ def cleanup_site_processes(site: str) -> None:
     if platform.system() != "Linux":
         return
 
+    root_dir = Path(__file__).resolve().parents[2]
     patterns = [
-        f"/root/baysync-{site}-stock-scraper/tmp_chrome",
+        str(root_dir / "legacy" / site / "tmp_chrome"),
         "/usr/local/bin/chromedriver",
     ]
     for pat in patterns:
