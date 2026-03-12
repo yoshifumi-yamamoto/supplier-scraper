@@ -19,7 +19,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/root/supplier-scraper-main
-EnvironmentFile=/root/baysync-yodobashi-stock-scraper/.env
+EnvironmentFile=/root/supplier-scraper-main/.env
 Environment=PYTHONPATH=/root/supplier-scraper-main
 Environment=MCP_JOB_LOG_DIR=/tmp/supplier-mcp-jobs
 ExecStart=/root/supplier-scraper-main/.venv/bin/uvicorn apps.mcp_server.main:app --host 0.0.0.0 --port 8090
@@ -40,9 +40,6 @@ systemctl status supplier-mcp.service
 
 ## Cron (推奨: 既存バッチは維持しつつ追加)
 ```cron
-# Legacy production batch
-0 0,12 * * * /bin/bash /root/run_all_scrapes.sh >> /var/log/run_all_scrapes.log 2>&1
-
 # MCP watchdog
 */5 * * * * /bin/bash /root/supplier-scraper-main/scripts/mcp_watchdog.sh >> /var/log/supplier_mcp_watchdog.log 2>&1
 
@@ -53,7 +50,6 @@ systemctl status supplier-mcp.service
 
 ## 手動実行ヘルパー
 ```bash
-# run_all_scrapes.sh 実行中は自動スキップ
 # site実行
 /bin/bash /root/supplier-scraper-main/scripts/mcp_run_site.sh yahoofleama
 /bin/bash /root/supplier-scraper-main/scripts/mcp_run_site.sh secondstreet 1
