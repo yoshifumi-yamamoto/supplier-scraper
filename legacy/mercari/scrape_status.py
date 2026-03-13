@@ -18,6 +18,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 import random
 import shutil
+from urllib.parse import urlparse
 
 load_dotenv()
 
@@ -84,6 +85,30 @@ def setup_driver(proxy=None):
     driver = webdriver.Chrome(service=service, options=options)
     driver.set_page_load_timeout(60)
     return driver, tmp_user_dir
+
+
+def normalize_mercari_url(raw_url):
+    if raw_url is None:
+        return None
+
+    url = str(raw_url).strip()
+    if not url:
+        return None
+
+    url = url.replace("\ufeff", "").replace("\r", "").replace("\n", "")
+    if url.startswith("//"):
+        url = f"https:{url}"
+    elif not urlparse(url).scheme:
+        url = f"https://{url.lstrip('/')}"
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return None
+    if not parsed.netloc:
+        return None
+    if "mercari.com" not in parsed.netloc.lower():
+        return None
+    return url
 
 def bulk_update_supabase(buffer):
     for row in buffer:
@@ -162,7 +187,28 @@ def scrape_file(args):
             supabase_buffer = []
 
             for row in rows:
-                url = row["stocking_url"]
+                raw_url = row.get("stocking_url")
+                url = normalize_mercari_url(raw_url)
+                if not url:
+                    logging.error(f"[SKIP] 無効なstocking_url: raw={raw_url!r} ebay_item_id={row.get('ebay_item_id')}")
+                    row["stock_status_checked"] = "done"
+                    row["stock_status"] = "不明"
+                    row["scraped_stock_status"] = "不明"
+                    writer.writerow(row)
+                    fail_count += 1
+                    supabase_buffer.append({
+                        "ebay_item_id": row["ebay_item_id"],
+                        "ebay_user_id": row["ebay_user_id"],
+                        "scraped_stock_status": "不明",
+                        "scraped_updated_at": datetime.now(timezone(timedelta(hours=9))).isoformat(),
+                        "is_scraped": False
+                    })
+                    if len(supabase_buffer) >= 100:
+                        bulk_update_supabase(supabase_buffer)
+                        supabase_buffer.clear()
+                    continue
+
+                row["stocking_url"] = url
                 is_shops = "shops" in url
                 status = "不明"
                 retries = 2

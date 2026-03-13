@@ -1,3 +1,6 @@
+from urllib.parse import urlparse
+
+from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -17,6 +20,30 @@ DELETED_XPATH = '//p[contains(text(), "削除されています")]'
 NOT_FOUND_XPATH = '//p[contains(text(), "見つかりませんでした")]'
 SHOPS_OOS_XPATH = '//p[@data-testid="out-of-stock"]'
 LOAD_FAILED_XPATH = '//*[contains(text(), "ページの読み込みに失敗しました")]'
+
+
+def normalize_mercari_url(raw_url: str | None) -> str | None:
+    if raw_url is None:
+        return None
+
+    url = str(raw_url).strip()
+    if not url:
+        return None
+
+    url = url.replace('\ufeff', '').replace('\r', '').replace('\n', '')
+    if url.startswith('//'):
+        url = f'https:{url}'
+    elif not urlparse(url).scheme:
+        url = f"https://{url.lstrip('/')}"
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ('http', 'https'):
+        return None
+    if not parsed.netloc:
+        return None
+    if 'mercari.com' not in parsed.netloc.lower():
+        return None
+    return url
 
 
 
@@ -79,9 +106,18 @@ def _detect_standard_status(driver) -> tuple[ScrapeStatus, str]:
 
 
 def check_stock_status(driver, url: str) -> tuple[ScrapeStatus, str]:
-    driver.get(url)
+    normalized_url = normalize_mercari_url(url)
+    if not normalized_url:
+        return ScrapeStatus.UNKNOWN, 'invalid_url'
+
+    try:
+        driver.get(normalized_url)
+    except WebDriverException as exc:
+        if 'invalid argument' in str(exc).lower():
+            return ScrapeStatus.UNKNOWN, 'invalid_url_argument'
+        raise
     wait_ready(driver)
-    is_shops = 'shops' in (url or '')
+    is_shops = 'shops' in normalized_url
     if is_shops:
         return _detect_mercari_shops_status(driver)
     return _detect_standard_status(driver)

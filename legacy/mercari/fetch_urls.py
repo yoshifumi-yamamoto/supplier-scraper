@@ -84,7 +84,7 @@ def fetch_data_from_supabase():
 
 
 def save_filtered_csv(data):
-    filtered = [row for row in data if "mercari.com" in row["stocking_url"]]
+    filtered = [row for row in data if "mercari.com" in (row.get("stocking_url") or "")]
 
     os.makedirs("input", exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
