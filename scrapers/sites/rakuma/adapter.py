@@ -17,7 +17,7 @@ def _to_japanese(status: ScrapeStatus) -> str:
 def run_pipeline(run_id: str) -> dict:
     fetch_step = start_step(run_id=run_id, step_name='fetch_items')
     try:
-        items = fetch_active_items_by_domain('fril.jp')
+        items = fetch_active_items_by_domain(['fril.jp', 'item.fril.jp'])
         finish_step(fetch_step, status='success', message=f'fetched={len(items)}')
     except Exception as exc:  # noqa: BLE001
         finish_step(fetch_step, status='failed', message=str(exc))
@@ -52,7 +52,7 @@ def run_pipeline(run_id: str) -> dict:
                 json_log('warning', 'rakuma check failed', site='rakuma', ebay_item_id=row.get('ebay_item_id'), error=str(exc))
                 status = ScrapeStatus.UNKNOWN
             jp = _to_japanese(status)
-            update_item_stock(row['ebay_item_id'], jp, is_scraped=True)
+            update_item_stock(row['ebay_item_id'], jp, is_scraped=(status != ScrapeStatus.UNKNOWN))
             checked += 1
             if status == ScrapeStatus.IN_STOCK:
                 in_stock += 1

@@ -14,7 +14,7 @@ STATUS_MAP = {
 def run_pipeline(run_id: str) -> dict:
     fetch_step = start_step(run_id, 'fetch_items')
     try:
-        items = fetch_active_items_by_domain('suruga-ya.jp', page_size=25)
+        items = fetch_active_items_by_domain(['suruga-ya.jp', 'www.suruga-ya.jp'], page_size=25)
         if not items:
             finish_step(fetch_step, 'success', 'surugaya no target items')
             return {'status': 'success', 'message': 'surugaya pipeline completed: 0 items'}

@@ -15,7 +15,7 @@ STATUS_MAP = {
 def run_pipeline(run_id: str) -> dict:
     fetch_step = start_step(run_id, "fetch_items")
     try:
-        items = fetch_active_items_by_domain('auctions.yahoo.co.jp')
+        items = fetch_active_items_by_domain(['auctions.yahoo.co.jp', 'page.auctions.yahoo.co.jp'])
         if not items:
             finish_step(fetch_step, "success", "yafuoku no target items")
             return {"status": "success", "message": "yafuoku pipeline completed: 0 items"}
