@@ -2,14 +2,10 @@
 set -euo pipefail
 
 APP_DIR="${KAGOYA_APP_DIR:-/root/supplier-scraper-main}"
-BRANCH="${KAGOYA_BRANCH:-main}"
 
 cd "$APP_DIR"
 
-echo "[deploy] app_dir=$APP_DIR branch=$BRANCH"
-git fetch origin
-git checkout "$BRANCH"
-git pull --ff-only origin "$BRANCH"
+echo "[deploy] app_dir=$APP_DIR"
 
 if [ -x ".venv/bin/python3" ]; then
   .venv/bin/python3 -m py_compile \

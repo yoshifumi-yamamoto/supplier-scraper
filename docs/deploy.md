@@ -28,17 +28,16 @@
 - `supplier-mcp.service` が既存どおり動いている
 
 ## デプロイ内容
-- `git fetch origin`
-- `git checkout <branch>`
-- `git pull --ff-only origin <branch>`
+- GitHub Actions runner から KAGOYA へ `rsync`
 - `.venv/bin/python3 -m py_compile` による最低限の検証
 - `supplier-mcp.service` の restart
 
 ## 注意
-- これは `push -> pull/restart` の最小構成
+- これは `push -> rsync/restart` の最小構成
 - DB migration は自動適用していない
 - migration が必要な変更は、workflow を分けるか手順を明示する
 
 ## 今回この形にした理由
 - 現在の障害は、修正自体より「修正が KAGOYA に入っていない」ことが原因だった
 - まずは未デプロイ事故を構造で潰す方が優先
+- KAGOYA 上の `/root/supplier-scraper-main` は `git clone` ではなく作業ディレクトリだったため、`git pull` 前提では動かなかった

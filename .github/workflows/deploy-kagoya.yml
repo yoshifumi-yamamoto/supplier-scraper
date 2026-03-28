@@ -25,13 +25,29 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H "${{ secrets.KAGOYA_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Deploy on KAGOYA
+      - name: Sync files to KAGOYA
         env:
           KAGOYA_HOST: ${{ secrets.KAGOYA_HOST }}
           KAGOYA_USER: ${{ secrets.KAGOYA_USER }}
           KAGOYA_APP_DIR: ${{ secrets.KAGOYA_APP_DIR }}
-          KAGOYA_BRANCH: ${{ github.ref_name }}
+        run: |
+          rsync -az --delete \
+            --exclude '.git/' \
+            --exclude '.github/' \
+            --exclude '.venv/' \
+            --exclude '.env' \
+            --exclude 'output/' \
+            --exclude 'jobs/' \
+            --exclude 'node_modules/' \
+            --exclude '.DS_Store' \
+            ./ "${KAGOYA_USER}@${KAGOYA_HOST}:${KAGOYA_APP_DIR}/"
+
+      - name: Finalize deploy on KAGOYA
+        env:
+          KAGOYA_HOST: ${{ secrets.KAGOYA_HOST }}
+          KAGOYA_USER: ${{ secrets.KAGOYA_USER }}
+          KAGOYA_APP_DIR: ${{ secrets.KAGOYA_APP_DIR }}
         run: |
           ssh "${KAGOYA_USER}@${KAGOYA_HOST}" \
-            "export KAGOYA_APP_DIR='${KAGOYA_APP_DIR}' KAGOYA_BRANCH='${KAGOYA_BRANCH}' && bash -s" \
+            "export KAGOYA_APP_DIR='${KAGOYA_APP_DIR}' && bash -s" \
             < scripts/deploy_kagoya.sh

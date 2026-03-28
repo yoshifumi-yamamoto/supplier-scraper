@@ -54,5 +54,17 @@
   - 「直したが本番に入っていない」を運用ミスではなく構造で防ぐ
 - 残課題:
   - GitHub Secrets の設定
-  - KAGOYA 側 repo / service / key の前提確認
+  - KAGOYA 側 service / key の前提確認
   - DB migration を伴う変更の自動化方針
+
+### KAGOYA deploy を `git pull` から `rsync` に切り替え
+- 事象:
+  - GitHub Actions 初回実行で `fatal: not a git repository` となり deploy に失敗
+- 原因:
+  - KAGOYA の `/root/supplier-scraper-main` は `git clone` された repo ではなく、ファイルが配置された作業ディレクトリだった
+- 対応:
+  - `.github/workflows/deploy-kagoya.yml` を `rsync -> remote finalize` に変更
+  - `scripts/deploy_kagoya.sh` から `git fetch/pull` を削除
+- 判断理由:
+  - 現在の本番実体に合わせた方が早く、未デプロイ事故も防げる
+  - `.env` や `.venv` を温存しつつコードだけ同期できる
