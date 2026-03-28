@@ -70,6 +70,78 @@ def _build_fetch_params(domains: list[str], size: int, last_item_id: Union[str, 
     return params
 
 
+def _is_fetch_timeout_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(
+        pattern in text
+        for pattern in (
+            "57014",
+            "statement timeout",
+            "canceling statement due to statement timeout",
+            "read timed out",
+            "readtimeout",
+            "supabase 500",
+            "supabase 502",
+        )
+    )
+
+
+def _fetch_domain_rows(
+    *,
+    url: str,
+    domains: list[str],
+    size: int,
+    use_stocking_domain: bool,
+) -> tuple[list[dict[str, Any]], int, bool]:
+    all_rows: list[dict[str, Any]] = []
+    last_item_id = None
+    page = 1
+    fallback_used = False
+    current_size = size
+    while True:
+        params = _build_fetch_params(domains, current_size, last_item_id, use_stocking_domain=use_stocking_domain)
+        data = None
+        for attempt in range(FETCH_MAX_RETRIES):
+            try:
+                res = requests.get(url, headers=_headers(), params=params, timeout=45)
+                if use_stocking_domain and res.status_code == 400 and "stocking_domain" in res.text:
+                    raise ValueError("stocking_domain unavailable")
+                if res.status_code >= 500:
+                    preview = res.text[:300].replace("\n", " ")
+                    raise requests.HTTPError(f"Supabase {res.status_code} on page {page}: {preview}", response=res)
+                res.raise_for_status()
+                data = res.json()
+                break
+            except ValueError:
+                raise
+            except Exception as exc:
+                if _is_fetch_timeout_error(exc) and current_size > MIN_PAGE_SIZE:
+                    next_size = max(MIN_PAGE_SIZE, current_size // 2)
+                    if next_size != current_size:
+                        json_log(
+                            "warning",
+                            "items fetch reducing page size after timeout",
+                            domain=",".join(domains),
+                            page=page,
+                            previous_page_size=current_size,
+                            next_page_size=next_size,
+                            error=str(exc)[:300],
+                        )
+                    current_size = next_size
+                    params = _build_fetch_params(domains, current_size, last_item_id, use_stocking_domain=use_stocking_domain)
+                if attempt == FETCH_MAX_RETRIES - 1:
+                    raise
+                time.sleep(FETCH_BACKOFF_BASE * (2 ** attempt))
+        if not data:
+            break
+        all_rows.extend(data)
+        last_item_id = data[-1]["ebay_item_id"]
+        if len(data) < current_size:
+            break
+        page += 1
+    return all_rows, page, fallback_used
+
+
 def fetch_active_items_by_domain(domain: Union[str, Iterable[str]], page_size: Union[int, None] = None) -> list[dict[str, Any]]:
     if not _enabled():
         raise RuntimeError("SUPABASE_URL / SUPABASE_KEY is not set")
@@ -80,45 +152,40 @@ def fetch_active_items_by_domain(domain: Union[str, Iterable[str]], page_size: U
     if not normalized_domains:
         return []
     all_rows: list[dict[str, Any]] = []
-    last_item_id = None
-    page = 1
     use_stocking_domain = True
     fallback_used = False
-    while True:
-        params = _build_fetch_params(normalized_domains, size, last_item_id, use_stocking_domain=use_stocking_domain)
-        data = None
-        for attempt in range(FETCH_MAX_RETRIES):
-            try:
-                res = requests.get(url, headers=_headers(), params=params, timeout=45)
-                if use_stocking_domain and res.status_code == 400 and "stocking_domain" in res.text:
-                    use_stocking_domain = False
-                    fallback_used = True
-                    params = _build_fetch_params(
-                        normalized_domains,
-                        size,
-                        last_item_id,
-                        use_stocking_domain=False,
-                    )
-                    continue
-                if res.status_code >= 500:
-                    preview = res.text[:300].replace("\n", " ")
-                    raise requests.HTTPError(f"Supabase {res.status_code} on page {page}: {preview}", response=res)
-                res.raise_for_status()
-                data = res.json()
-                break
-            except Exception as exc:
-                if '57014' in str(exc) and size > MIN_PAGE_SIZE:
-                    size = max(MIN_PAGE_SIZE, size // 2)
-                if attempt == FETCH_MAX_RETRIES - 1:
-                    raise
-                time.sleep(FETCH_BACKOFF_BASE * (2 ** attempt))
-        if not data:
-            break
-        all_rows.extend(data)
-        last_item_id = data[-1]["ebay_item_id"]
-        if len(data) < size:
-            break
-        page += 1
+    page = 0
+    try:
+        if len(normalized_domains) == 1:
+            rows, pages, _ = _fetch_domain_rows(
+                url=url,
+                domains=normalized_domains,
+                size=size,
+                use_stocking_domain=True,
+            )
+            all_rows.extend(rows)
+            page += pages
+        else:
+            for normalized_domain in normalized_domains:
+                rows, pages, _ = _fetch_domain_rows(
+                    url=url,
+                    domains=[normalized_domain],
+                    size=size,
+                    use_stocking_domain=True,
+                )
+                all_rows.extend(rows)
+                page += pages
+    except ValueError as exc:
+        if "stocking_domain unavailable" not in str(exc):
+            raise
+        use_stocking_domain = False
+        fallback_used = True
+        all_rows, page, _ = _fetch_domain_rows(
+            url=url,
+            domains=normalized_domains,
+            size=size,
+            use_stocking_domain=False,
+        )
     elapsed_ms = int((time.monotonic() - started) * 1000)
     json_log(
         "info",

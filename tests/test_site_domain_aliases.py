@@ -84,7 +84,7 @@ class SiteAliasDomainTests(unittest.TestCase):
     @patch("scrapers.sites.yafuoku.adapter.fetch_active_items_by_domain", return_value=[])
     def test_yafuoku_fetches_alias_domains(self, fetch_mock, _start_mock, _finish_mock) -> None:
         result = yafuoku_adapter.run_pipeline("run-1")
-        fetch_mock.assert_called_once_with(["auctions.yahoo.co.jp", "page.auctions.yahoo.co.jp"])
+        fetch_mock.assert_called_once_with(["auctions.yahoo.co.jp", "page.auctions.yahoo.co.jp"], page_size=25)
         self.assertEqual(result["status"], "success")
 
 

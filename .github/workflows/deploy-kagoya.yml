@@ -1,0 +1,37 @@
+name: Deploy To KAGOYA
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start ssh-agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.KAGOYA_SSH_PRIVATE_KEY }}
+
+      - name: Add KAGOYA to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.KAGOYA_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy on KAGOYA
+        env:
+          KAGOYA_HOST: ${{ secrets.KAGOYA_HOST }}
+          KAGOYA_USER: ${{ secrets.KAGOYA_USER }}
+          KAGOYA_APP_DIR: ${{ secrets.KAGOYA_APP_DIR }}
+          KAGOYA_BRANCH: ${{ github.ref_name }}
+        run: |
+          ssh "${KAGOYA_USER}@${KAGOYA_HOST}" \
+            "export KAGOYA_APP_DIR='${KAGOYA_APP_DIR}' KAGOYA_BRANCH='${KAGOYA_BRANCH}' && bash -s" \
+            < scripts/deploy_kagoya.sh
