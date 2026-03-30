@@ -68,3 +68,25 @@
 - 判断理由:
   - 現在の本番実体に合わせた方が早く、未デプロイ事故も防げる
   - `.env` や `.venv` を温存しつつコードだけ同期できる
+
+## 2026-03-30
+
+### `validator stale` と空エラー文言の再発に対する補修
+- 事象:
+  - `mercari` / `yafuoku` / `yahoofleama` がダッシュボード上で失敗表示
+  - `yahoofleama` の最新失敗 run は `error_summary = "Message: "` で原因が読めなかった
+  - `yafuoku` / `yahoofleama` では validator に stale 判定された後でも、後続で success 完走した run に古い `error_summary` が残るケースがあった
+- 原因:
+  - `scrapers/common/run_store.py` の `finish_run()` が success 時に `error_summary` を明示的に `null` に戻していなかった
+  - `apps/runner/main.py` と一部 adapter が `str(exc)` だけを保存しており、Selenium 例外によっては `"Message:"` のような情報量ゼロの文字列になっていた
+- 対応:
+  - `scrapers/common/error_text.py` を追加し、`str(exc)` が空に近いときは `exc.msg` / `exc.args` / 例外型を使って説明文へ整形
+  - `apps/runner/main.py` で run 失敗時の通知・保存文言にその整形結果を使用
+  - `scrapers/sites/yahoofleama/adapter.py` で step 失敗時も同じ整形結果を記録
+  - `scrapers/common/run_store.py` で `finish_run()` が毎回 `error_summary` を更新し、success 時は `null` に戻すよう変更
+- 検証:
+  - `python3 -m py_compile apps/runner/main.py scrapers/common/run_store.py scrapers/common/error_text.py scrapers/sites/yahoofleama/adapter.py`
+  - `python3 -m unittest tests.test_items_fetch tests.test_mercari_domain_fetch tests.test_site_domain_aliases`
+- 残課題:
+  - KAGOYA 反映後に `yahoofleama` の次回失敗で空メッセージが消えるか確認
+  - stale 判定そのものの閾値 (`120m`) と、実際の長時間サイトの実行特性が合っているかは別途見直しが必要

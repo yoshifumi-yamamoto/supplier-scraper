@@ -69,8 +69,7 @@ def finish_run(run_id: str, status: str, error_summary: str | None = None) -> No
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    if error_summary:
-        payload["error_summary"] = error_summary
+    payload["error_summary"] = error_summary[:1000] if error_summary else None
     _request('PATCH', f'/rest/v1/scrape_runs?id=eq.{run_id}', json=payload, timeout=20)
 
 

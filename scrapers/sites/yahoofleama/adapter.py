@@ -1,5 +1,6 @@
 from scrapers.common.browser import build_chrome
 from scrapers.common.items import fetch_active_items_by_domain, update_item_stock
+from scrapers.common.error_text import describe_exception
 from scrapers.common.run_store import finish_step, start_step
 from scrapers.common.models import ScrapeStatus
 from scrapers.sites.yahoofleama.checker import check_stock_status
@@ -44,7 +45,7 @@ def run_pipeline(run_id: str) -> dict:
                 finish_step(step, 'success', message)
                 processed += 1
             except Exception as exc:
-                finish_step(step, 'failed', str(exc))
+                finish_step(step, 'failed', describe_exception(exc))
                 raise
     finally:
         try:

@@ -8,8 +8,10 @@ from scrapers.common.execution_guard import (
     cleanup_site_processes,
     release_run_lock,
 )
+from scrapers.common.error_classifier import classify_error
+from scrapers.common.error_text import describe_exception
 from scrapers.common.logging_utils import json_log
-from scrapers.common.notifier import build_failure_message, notify_chatwork
+from scrapers.common.notifier import build_failure_message, notify_chatwork, should_notify_failure
 from scrapers.common.run_store import create_run, finish_run
 from scrapers.sites.registry import SITE_RUNNERS, list_sites
 
@@ -58,19 +60,34 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001
             json_log("warning", "finish_run failed", run_id=run_id, site=args.site, error=str(exc))
         if status != "success":
-            notify_chatwork(
-                build_failure_message(
-                    site=args.site,
+            error_text = result_message or "pipeline returned error status"
+            if should_notify_failure(error_text):
+                notify_chatwork(build_failure_message(site=args.site, run_id=run_id, error=error_text))
+            else:
+                json_log(
+                    "info",
+                    "suppressed transient failure notification",
                     run_id=run_id,
-                    error=result_message or "pipeline returned error status",
+                    site=args.site,
+                    error=error_text,
+                    error_type=classify_error(error_text),
                 )
-            )
         cleanup_site_processes(args.site)
         return 0 if status == "success" else 1
     except Exception as exc:  # noqa: BLE001
-        msg = str(exc)
+        msg = describe_exception(exc)
         json_log("error", "run failed", run_id=run_id, site=args.site, error=msg)
-        notify_chatwork(build_failure_message(site=args.site, run_id=run_id, error=msg))
+        if should_notify_failure(msg):
+            notify_chatwork(build_failure_message(site=args.site, run_id=run_id, error=msg))
+        else:
+            json_log(
+                "info",
+                "suppressed transient failure notification",
+                run_id=run_id,
+                site=args.site,
+                error=msg,
+                error_type=classify_error(msg),
+            )
         try:
             finish_run(run_id=run_id, status="failed", error_summary=msg)
         except Exception as finish_exc:  # noqa: BLE001
