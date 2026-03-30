@@ -3,9 +3,15 @@ from datetime import datetime, timezone
 
 import requests
 
+from scrapers.common.error_classifier import is_transient_error
+
 
 def _is_enabled() -> bool:
     return os.getenv("CHATWORK_NOTIFY_ENABLED", "false").lower() == "true"
+
+
+def should_notify_failure(error: str | None) -> bool:
+    return not is_transient_error(error)
 
 
 def notify_chatwork(message: str) -> None:
@@ -36,4 +42,3 @@ def build_failure_message(site: str, run_id: str, error: str) -> str:
         f"status: failed\n"
         f"error: {error}"
     )
-

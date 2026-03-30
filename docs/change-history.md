@@ -118,3 +118,13 @@
   - `bash -n scripts/deploy_kagoya.sh`
 - 残課題:
   - GitHub Actions 上で `requirements.txt` を入れた状態の preflight が green になることを確認する
+
+### preflight で `notifier.py` の未コミット差分を検出
+- 事象:
+  - GitHub Actions `preflight` が `ImportError: cannot import name 'should_notify_failure'` で停止
+- 原因:
+  - `scrapers/common/notifier.py` の `should_notify_failure()` 追加が local 変更のままで、repo に反映されていなかった
+- 対応:
+  - `scrapers/common/notifier.py` を正式に commit 対象へ追加
+- 効果:
+  - 今回のような「server に手当てしたが repo に戻していない」差分が workflow で顕在化し、そのまま deploy されなくなる
