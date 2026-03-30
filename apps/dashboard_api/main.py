@@ -1345,8 +1345,10 @@ def mcp_summary() -> dict:
                 prev = latest_by_site.get(site)
                 if not prev or ((started_at or "") > (prev.get("started_at") or "")):
                     latest_by_site[site] = {
+                        "id": row.get("id"),
                         "site": site,
                         "status": status,
+                        "trigger_type": row.get("trigger_type"),
                         "started_at": started_at,
                         "finished_at": finished_at,
                         "error_summary": error_summary,
