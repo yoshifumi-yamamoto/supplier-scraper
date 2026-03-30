@@ -1,14 +1,28 @@
-import { fetchMCPSummary, fetchOverview, fetchSystemMemory, fetchValidatorSummary } from "@/lib/api";
+import { fetchMCPSummary, fetchOverview, fetchSystemMemory, fetchSystemSchedule, fetchValidatorSummary } from "@/lib/api";
 import Link from "next/link";
 
 type SiteView = {
   site: string;
   status: string;
   lastRun: string | null;
+  startedAt: string | null;
   errorSummary: string;
-  successRate: number;
   runSuccessRate: number | null;
   lastRunStatus: string;
+  elapsedMinutes: number | null;
+  nextRunAt: string | null;
+  intervalMinutes: number | null;
+  stepSummary: {
+    totalItems: number | null;
+    processedItems: number | null;
+    remainingItems: number | null;
+    successItems: number | null;
+    failedItems: number | null;
+    runningItems: number | null;
+    progressPercent: number | null;
+    lastStepAt: string | null;
+    etaAt: string | null;
+  } | null;
 };
 
 function fmt(ts?: string | null) {
@@ -20,6 +34,14 @@ function fmt(ts?: string | null) {
 
 function pct(v: number) {
   return `${Math.max(0, Math.min(100, Math.round(v)))}%`;
+}
+
+function mins(v?: number | null) {
+  if (v == null) return "-";
+  if (v < 60) return `${v}分`;
+  const h = Math.floor(v / 60);
+  const m = v % 60;
+  return m ? `${h}時間${m}分` : `${h}時間`;
 }
 
 function siteStatus(status: string) {
@@ -35,10 +57,18 @@ function runLabel(status: string) {
   return "不明";
 }
 
+function aiSeverityLabel(severity?: string) {
+  if (severity === "high") return "高";
+  if (severity === "medium") return "中";
+  if (severity === "low") return "低";
+  return "-";
+}
+
 export default async function Page() {
   const overview = await fetchOverview();
   const systemMemory = await fetchSystemMemory();
   const mcp = await fetchMCPSummary();
+  const schedule = await fetchSystemSchedule();
   const validator = await fetchValidatorSummary();
 
   const latestMap = new Map(mcp.latest_by_site.map((v) => [v.site, v]));
@@ -52,17 +82,37 @@ export default async function Page() {
       site: name,
       status: latest?.status ?? ov?.latest_status ?? "unknown",
       lastRun: latest?.finished_at ?? latest?.started_at ?? ov?.last_run ?? null,
+      startedAt: latest?.started_at ?? null,
       errorSummary: latest?.error_summary ?? "",
-      successRate: ov?.success_rate ?? (latest?.status === "success" ? 100 : latest?.status === "running" ? 70 : 0),
       runSuccessRate: ov?.run_success_rate ?? null,
       lastRunStatus: ov?.last_run_status ?? latest?.status ?? "unknown",
+      elapsedMinutes: latest?.elapsed_minutes ?? null,
+      nextRunAt: latest?.next_run_at ?? null,
+      intervalMinutes: latest?.interval_minutes ?? null,
+      stepSummary: latest?.step_summary
+        ? {
+            totalItems: latest.step_summary.total_items ?? null,
+            processedItems: latest.step_summary.processed_items ?? null,
+            remainingItems: latest.step_summary.remaining_items ?? null,
+            successItems: latest.step_summary.success_items ?? null,
+            failedItems: latest.step_summary.failed_items ?? null,
+            runningItems: latest.step_summary.running_items ?? null,
+            progressPercent: latest.step_summary.progress_percent ?? null,
+            lastStepAt: latest.step_summary.last_step_at ?? null,
+            etaAt: latest.step_summary.eta_at ?? null,
+          }
+        : null,
     };
   });
 
   const totalSites = sites.length;
   const okSites = sites.filter((s) => s.status === "success").length;
   const ngSites = sites.filter((s) => s.status !== "success").length;
+  const runningSites = sites.filter((s) => s.status === "running").length;
   const health = totalSites === 0 ? 0 : Math.round((okSites / totalSites) * 100);
+  const runningWithProgress = sites.filter((s) => s.status === "running" && s.stepSummary?.totalItems != null);
+  const totalProcessingItems = runningWithProgress.reduce((sum, s) => sum + (s.stepSummary?.totalItems ?? 0), 0);
+  const totalProcessedItems = runningWithProgress.reduce((sum, s) => sum + (s.stepSummary?.processedItems ?? 0), 0);
 
   return (
     <main className="dashboard">
@@ -85,20 +135,20 @@ export default async function Page() {
 
       <section className="kpi-grid">
         <article className="kpi-card kpi-danger">
-          <p>サイト正常率</p>
-          <h2>{pct(health)}</h2>
+          <p>失敗サイト</p>
+          <h2>{ngSites}</h2>
         </article>
         <article className="kpi-card">
-          <p>監視アイテム総数</p>
+          <p>監視サイト数</p>
           <h2>{mcp.kpis.sites_tracked || totalSites}</h2>
         </article>
         <article className="kpi-card">
-          <p>正常稼働</p>
-          <h2>{okSites}</h2>
+          <p>実行中サイト</p>
+          <h2>{runningSites}</h2>
         </article>
         <article className="kpi-card">
-          <p>エラー発生</p>
-          <h2>{ngSites}</h2>
+          <p>稼働中の処理件数</p>
+          <h2>{totalProcessedItems}/{totalProcessingItems || "-"}</h2>
         </article>
         <article className="kpi-card">
           <p>メモリ使用率</p>
@@ -123,22 +173,67 @@ export default async function Page() {
                 <span className={`pill pill-${st.tone}`}>{st.label}</span>
               </div>
 
-              <div className="progress-label">
-                <span>成功率</span>
-                <span>{pct(site.successRate)}</span>
-              </div>
-              <div className="progress-track">
-                <div className="progress-bar" style={{ width: pct(site.successRate) }} />
+              {site.stepSummary?.progressPercent != null ? (
+                <>
+                  <div className="progress-label">
+                    <span>進捗</span>
+                    <span>{site.stepSummary.processedItems}/{site.stepSummary.totalItems} ({pct(site.stepSummary.progressPercent)})</span>
+                  </div>
+                  <div className="progress-track">
+                    <div className="progress-bar" style={{ width: pct(site.stepSummary.progressPercent) }} />
+                  </div>
+                </>
+              ) : null}
+
+              <div className="site-meta">
+                <div>
+                  <span>開始時刻</span>
+                  <strong>{fmt(site.startedAt)}</strong>
+                </div>
+                <div>
+                  <span>経過時間</span>
+                  <strong>{mins(site.elapsedMinutes)}</strong>
+                </div>
               </div>
 
               <div className="site-meta">
                 <div>
-                  <span>最終実行</span>
-                  <strong>{fmt(site.lastRun)}</strong>
+                  <span>次回予定</span>
+                  <strong>{site.status === "running" ? "実行中" : fmt(site.nextRunAt)}</strong>
                 </div>
                 <div>
-                  <span>前回実行</span>
+                  <span>実行間隔</span>
+                  <strong>{site.intervalMinutes ? `${site.intervalMinutes}分` : "-"}</strong>
+                </div>
+              </div>
+
+              <div className="site-meta">
+                <div>
+                  <span>最終更新</span>
+                  <strong>{fmt(site.stepSummary?.lastStepAt ?? site.lastRun)}</strong>
+                </div>
+                <div>
+                  <span>前回結果</span>
                   <strong>{runLabel(site.lastRunStatus)}</strong>
+                </div>
+              </div>
+
+              <div className="site-meta">
+                <div>
+                  <span>成功 / 失敗 / 実行中</span>
+                  <strong>
+                    {site.stepSummary
+                      ? `${site.stepSummary.successItems ?? 0} / ${site.stepSummary.failedItems ?? 0} / ${site.stepSummary.runningItems ?? 0}`
+                      : "-"}
+                  </strong>
+                </div>
+                <div>
+                  <span>残件 / 完了見込み</span>
+                  <strong>
+                    {site.stepSummary
+                      ? `${site.stepSummary.remainingItems ?? "-"} / ${fmt(site.stepSummary.etaAt)}`
+                      : "-"}
+                  </strong>
                 </div>
               </div>
 
@@ -168,10 +263,10 @@ export default async function Page() {
             <span>別ページで実行</span>
           </div>
           <p className="action-copy">
-            Mercari の検索URLを入力して、商品情報抽出ジョブを開始します。
+            抽出ツールのトップです。Mercari、Kitamura、Surugaya などサイト別の抽出画面へ移動できます。
           </p>
-          <Link className="extract-link-button" href="/extract/mercari">
-            Mercari抽出ページへ
+          <Link className="extract-link-button" href="/extract">
+            抽出トップへ
           </Link>
         </article>
 
@@ -227,6 +322,21 @@ export default async function Page() {
               <p>Today Failures</p>
               <h4>{overview.today_failures}</h4>
             </div>
+            <div className="ops-card">
+              <p>AI判定</p>
+              <h4>{validator.ai_notification?.status === "sent" ? aiSeverityLabel(validator.ai_notification?.severity) : "-"}</h4>
+            </div>
+            <div className="ops-card">
+              <p>Schedule</p>
+              <h4>{schedule.items.length}</h4>
+            </div>
+          </div>
+          <div className="code-line" style={{ marginTop: 16 }}>
+            {validator.ai_notification?.title
+              ? `AI: ${validator.ai_notification.title}`
+              : validator.ai_notification?.error
+                ? `AI error: ${validator.ai_notification.error}`
+                : "AI判定の最新通知なし"}
           </div>
         </article>
       </section>

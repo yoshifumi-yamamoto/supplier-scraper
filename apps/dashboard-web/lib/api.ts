@@ -32,8 +32,24 @@ export type MCPSummary = {
     started_at: string | null;
     finished_at: string | null;
     error_summary: string;
+    error_type?: string;
+    elapsed_minutes?: number | null;
+    next_run_at?: string | null;
+    interval_minutes?: number | null;
+    step_summary?: {
+      total_items?: number | null;
+      processed_items?: number | null;
+      remaining_items?: number | null;
+      success_items?: number | null;
+      failed_items?: number | null;
+      running_items?: number | null;
+      progress_percent?: number | null;
+      last_step_at?: string | null;
+      avg_step_sec?: number | null;
+      eta_at?: string | null;
+    } | null;
   }[];
-  top_errors: { message: string; count: number; last_seen_at?: string | null }[];
+  top_errors: { message: string; error_type?: string; count: number; last_seen_at?: string | null }[];
   server: {
     cpu_percent: number;
     memory_percent: number;
@@ -52,8 +68,15 @@ export type ValidatorSummary = {
   failed_recent: number;
   retried_count: number;
   skipped_count: number;
-  retried: { site?: string; failed_run_id?: string }[];
-  skipped: { site?: string; run_id?: string; reason?: string }[];
+  retried: { site?: string; failed_run_id?: string; error_type?: string }[];
+  skipped: { site?: string; run_id?: string; reason?: string; error_type?: string }[];
+  ai_notification: {
+    status?: string;
+    severity?: string;
+    title?: string;
+    reasons?: string[];
+    error?: string;
+  } | null;
   status: string;
 };
 
@@ -125,6 +148,7 @@ export async function fetchValidatorSummary(): Promise<ValidatorSummary> {
     skipped_count: 0,
     retried: [],
     skipped: [],
+    ai_notification: null,
     status: "unknown",
   };
   try {

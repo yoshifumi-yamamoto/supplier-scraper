@@ -144,3 +144,18 @@
 - 残課題:
   - 本番反映後に `mercari` / `yafuoku` が `120m` ではなく `360m` までは失敗化されないことを確認する
   - さらに安全にするなら「プロセス生存 + step 更新あり」は stale 対象外に固定する
+
+### ダッシュボードを成功率中心から運用状態中心へ変更
+- 事象:
+  - 画面上の `70%` や `100%` が運用判断に使えず、`running` 中の件数・残件・完了見込み・次回予定が見えなかった
+- 原因:
+  - API が `scrape_runs` の粗い状態しか返しておらず、`scrape_run_steps` の件数進捗や最終更新をUIに渡していなかった
+- 対応:
+  - `apps/dashboard_api/main.py` で latest run ごとに `scrape_run_steps` を集計
+  - `processed / total / remaining / success / failed / running / eta / last_step_at / next_run_at` を返すよう変更
+  - `apps/dashboard-web/app/page.tsx` を成功率主表示から、進捗件数・経過時間・次回予定・成功失敗件数中心の表示へ変更
+- 検証:
+  - `python3 -m py_compile apps/dashboard_api/main.py`
+  - `npm run build` は local の Next SWC バイナリ読み込み制限で完走不可だったため、GitHub Actions / 本番で確認が必要
+- 残課題:
+  - `running` ではない最新 failed run について、直前までの件数進捗を保持して表示するかは別途検討

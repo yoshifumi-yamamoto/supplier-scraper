@@ -8,12 +8,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlparse
 import re
+import math
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 import requests
 import psutil
 from pydantic import BaseModel
+
+from scrapers.common.error_classifier import classify_error
 
 app = FastAPI(title="Supplier Scraper Dashboard API")
 
@@ -22,6 +25,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY", "")
 ITEMS_TABLE = os.getenv("ITEMS_TABLE", "items")
 RUNS_TABLE = os.getenv("RUNS_TABLE", "scrape_runs")
+RUN_STEPS_TABLE = os.getenv("RUN_STEPS_TABLE", "scrape_run_steps")
 VALIDATOR_LOG_PATH = os.getenv("VALIDATOR_LOG_PATH", "/var/log/validator_agent.log")
 MERCARI_EXTRACT_SCRIPT = os.getenv(
     "MERCARI_EXTRACT_SCRIPT",
@@ -85,6 +89,19 @@ CACHE_TTL_MEMORY = int(os.getenv("DASHBOARD_CACHE_TTL_MEMORY", "5"))
 CACHE_TTL_SCHEDULE = int(os.getenv("DASHBOARD_CACHE_TTL_SCHEDULE", "60"))
 CACHE_TTL_VALIDATOR = int(os.getenv("DASHBOARD_CACHE_TTL_VALIDATOR", "30"))
 _API_CACHE: dict[str, dict[str, Any]] = {}
+MCP_DEFAULT_INTERVAL_MIN = int(os.getenv("MCP_DEFAULT_INTERVAL_MIN", "720"))
+MCP_ORCHESTRATOR_TICK_MIN = int(os.getenv("MCP_ORCHESTRATOR_TICK_MIN", "10"))
+
+SITE_INTERVAL_MINUTES: dict[str, int] = {
+    "mercari": int(os.getenv("MCP_INTERVAL_MERCARI_MIN", str(MCP_DEFAULT_INTERVAL_MIN))),
+    "yafuoku": int(os.getenv("MCP_INTERVAL_YAFUOKU_MIN", str(MCP_DEFAULT_INTERVAL_MIN))),
+    "hardoff": int(os.getenv("MCP_INTERVAL_HARDOFF_MIN", str(MCP_DEFAULT_INTERVAL_MIN))),
+    "yodobashi": int(os.getenv("MCP_INTERVAL_YODOBASHI_MIN", str(MCP_DEFAULT_INTERVAL_MIN))),
+    "rakuma": int(os.getenv("MCP_INTERVAL_RAKUMA_MIN", str(MCP_DEFAULT_INTERVAL_MIN))),
+    "kitamura": int(os.getenv("MCP_INTERVAL_KITAMURA_MIN", str(MCP_DEFAULT_INTERVAL_MIN))),
+    "yahoofleama": int(os.getenv("MCP_INTERVAL_YAHOOFLEAMA_MIN", str(MCP_DEFAULT_INTERVAL_MIN))),
+    "secondstreet": int(os.getenv("MCP_INTERVAL_SECONDSTREET_MIN", str(MCP_DEFAULT_INTERVAL_MIN))),
+}
 
 
 def _cache_get(key: str) -> Any | None:
@@ -216,6 +233,92 @@ def _fetch_runs(limit: int = 200) -> list[dict[str, Any]]:
         return []
     data = res.json()
     return data if isinstance(data, list) else []
+
+
+def _fetch_run_steps(run_id: str, limit: int = 20000) -> list[dict[str, Any]]:
+    if not SUPABASE_URL or not SUPABASE_KEY or not run_id:
+        return []
+    url = f"{SUPABASE_URL}/rest/v1/{RUN_STEPS_TABLE}"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+    }
+    params = {
+        "select": "id,run_id,step_name,status,started_at,finished_at,message,updated_at",
+        "run_id": f"eq.{run_id}",
+        "order": "started_at.asc",
+        "limit": str(limit),
+    }
+    res = requests.get(url, headers=headers, params=params, timeout=60)
+    if res.status_code >= 400:
+        return []
+    data = res.json()
+    return data if isinstance(data, list) else []
+
+
+def _site_interval_minutes(site: str) -> int:
+    return SITE_INTERVAL_MINUTES.get(site, MCP_DEFAULT_INTERVAL_MIN)
+
+
+def _ceil_to_tick(dt: datetime, tick_minutes: int) -> datetime:
+    tick_seconds = max(tick_minutes, 1) * 60
+    ts = int(dt.timestamp())
+    rounded = math.ceil(ts / tick_seconds) * tick_seconds
+    return datetime.fromtimestamp(rounded, tz=timezone.utc)
+
+
+def _extract_total_items_from_steps(steps: list[dict[str, Any]]) -> int | None:
+    for step in steps:
+        if step.get("step_name") != "fetch_items":
+            continue
+        message = (step.get("message") or "").strip()
+        m = re.search(r"fetched\s+(\d+)\s+items", message)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def _summarize_run_steps(run: dict[str, Any]) -> dict[str, Any]:
+    run_id = run.get("id")
+    steps = _fetch_run_steps(run_id) if run_id else []
+    total_items = _extract_total_items_from_steps(steps)
+    check_steps = [s for s in steps if str(s.get("step_name") or "").startswith("check:")]
+    success_steps = [s for s in check_steps if s.get("status") == "success"]
+    failed_steps = [s for s in check_steps if s.get("status") == "failed"]
+    running_steps = [s for s in check_steps if s.get("status") == "running"]
+    processed = len(success_steps) + len(failed_steps) + len(running_steps)
+    remaining = max((total_items or 0) - processed, 0) if total_items is not None else None
+
+    last_step_at: datetime | None = None
+    for step in steps:
+        for raw in (step.get("updated_at"), step.get("finished_at"), step.get("started_at")):
+            dt = _parse_ts(raw)
+            if dt and (last_step_at is None or dt > last_step_at):
+                last_step_at = dt
+
+    durations_sec: list[float] = []
+    for step in success_steps + failed_steps:
+        started = _parse_ts(step.get("started_at"))
+        finished = _parse_ts(step.get("finished_at"))
+        if started and finished and finished >= started:
+            durations_sec.append((finished - started).total_seconds())
+    avg_step_sec = round(sum(durations_sec) / len(durations_sec), 1) if durations_sec else None
+    eta_at = None
+    if avg_step_sec and remaining is not None and remaining > 0:
+        eta_at = (datetime.now(timezone.utc) + timedelta(seconds=avg_step_sec * remaining)).isoformat()
+
+    return {
+        "total_items": total_items,
+        "processed_items": processed,
+        "remaining_items": remaining,
+        "success_items": len(success_steps),
+        "failed_items": len(failed_steps),
+        "running_items": len(running_steps),
+        "progress_percent": round((processed / total_items) * 100) if total_items else None,
+        "last_step_at": last_step_at.isoformat() if last_step_at else None,
+        "avg_step_sec": avg_step_sec,
+        "eta_at": eta_at,
+    }
 
 
 def _process_counts() -> dict[str, int]:
@@ -1247,14 +1350,37 @@ def mcp_summary() -> dict:
                         "started_at": started_at,
                         "finished_at": finished_at,
                         "error_summary": error_summary,
+                        "error_type": classify_error(error_summary),
                     }
 
                 if status == "failed":
-                    key = error_summary[:120] if error_summary else "failed_without_summary"
+                    error_type = classify_error(error_summary)
+                    key = f"{error_type}:{error_summary[:120] if error_summary else 'failed_without_summary'}"
                     error_counter[key] += 1
                     seen_at = finished_at or started_at or ""
                     if seen_at and seen_at > error_last_seen.get(key, ""):
                         error_last_seen[key] = seen_at
+
+            for site, row in list(latest_by_site.items()):
+                started_dt = _parse_ts(row.get("started_at"))
+                finished_dt = _parse_ts(row.get("finished_at"))
+                current_dt = started_dt or finished_dt
+                elapsed_minutes = None
+                if current_dt:
+                    end_dt = now_utc if row.get("status") == "running" else (finished_dt or now_utc)
+                    elapsed_minutes = max(int((end_dt - current_dt).total_seconds() // 60), 0)
+                interval_min = _site_interval_minutes(site)
+                next_run_at = None
+                if row.get("status") == "running":
+                    next_run_at = None
+                elif started_dt:
+                    eligible_at = started_dt + timedelta(minutes=interval_min)
+                    next_run_at = _ceil_to_tick(eligible_at, MCP_ORCHESTRATOR_TICK_MIN).isoformat()
+
+                row["elapsed_minutes"] = elapsed_minutes
+                row["next_run_at"] = next_run_at
+                row["interval_minutes"] = interval_min
+                row["step_summary"] = _summarize_run_steps(row) if row.get("status") == "running" else None
 
             proc = _process_counts()
             vm = psutil.virtual_memory()
@@ -1267,7 +1393,12 @@ def mcp_summary() -> dict:
                 },
                 "latest_by_site": sorted(latest_by_site.values(), key=lambda x: x["site"]),
                 "top_errors": [
-                    {"message": m, "count": c, "last_seen_at": error_last_seen.get(m)}
+                    {
+                        "message": m.split(":", 1)[1] if ":" in m else m,
+                        "error_type": m.split(":", 1)[0] if ":" in m else "unknown",
+                        "count": c,
+                        "last_seen_at": error_last_seen.get(m),
+                    }
                     for m, c in error_counter.most_common(5)
                 ],
                 "server": {
@@ -1292,6 +1423,7 @@ def validator_summary() -> dict:
         "skipped_count": 0,
         "retried": [],
         "skipped": [],
+        "ai_notification": None,
         "status": "unknown",
     }
     try:
@@ -1310,15 +1442,18 @@ def validator_summary() -> dict:
                     continue
                 if row.get("message") != "validator run finished":
                     continue
-                retried = row.get("retried") or []
-                skipped = row.get("skipped") or []
+                ctx = row.get("context") or {}
+                retried = ctx.get("retried") or []
+                skipped = ctx.get("skipped") or []
+                ai_notification = ctx.get("ai_notification")
                 return {
-                    "checked_at": row.get("checked_at"),
-                    "failed_recent": int(row.get("failed_recent") or 0),
+                    "checked_at": ctx.get("checked_at"),
+                    "failed_recent": int(ctx.get("failed_recent") or 0),
                     "retried_count": len(retried),
                     "skipped_count": len(skipped),
                     "retried": retried[:10],
                     "skipped": skipped[:10],
+                    "ai_notification": ai_notification if isinstance(ai_notification, dict) else None,
                     "status": "ok",
                 }
             return fallback
