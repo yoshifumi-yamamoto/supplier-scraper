@@ -90,3 +90,13 @@
 - 残課題:
   - KAGOYA 反映後に `yahoofleama` の次回失敗で空メッセージが消えるか確認
   - stale 判定そのものの閾値 (`120m`) と、実際の長時間サイトの実行特性が合っているかは別途見直しが必要
+
+### デプロイ漏れで `runner` が `ModuleNotFoundError` を起こした件
+- 事象:
+  - `2026-03-30 11:14 JST` 頃、`mercari` / `yahoofleama` の手動再実行が起動直後に `ModuleNotFoundError: No module named 'scrapers.common.error_classifier'` で失敗
+- 原因:
+  - `scrapers/common/error_classifier.py` が local には存在したが、git 未管理のまま deploy に乗っていなかった
+- 対応:
+  - `scrapers/common/error_classifier.py` を repo 管理に追加して再 deploy
+- 残課題:
+  - deploy 後に `mercari` / `yahoofleama` を再度起動して即死しないことを確認する
