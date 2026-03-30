@@ -121,7 +121,7 @@ export async function fetchMCPSummary(): Promise<MCPSummary> {
     server: { cpu_percent: 0, memory_percent: 0, chrome_processes: 0, runner_processes: 0 },
   };
   try {
-    const res = await fetch(`${SERVER_API_BASE}/api/mcp/summary`, { next: { revalidate: 10 } });
+    const res = await fetch(`${SERVER_API_BASE}/api/mcp/summary`, { cache: "no-store" });
     if (!res.ok) return fallback;
     return res.json();
   } catch {
