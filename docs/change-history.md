@@ -128,3 +128,19 @@
   - `scrapers/common/notifier.py` を正式に commit 対象へ追加
 - 効果:
   - 今回のような「server に手当てしたが repo に戻していない」差分が workflow で顕在化し、そのまま deploy されなくなる
+
+### validator の stale 判定を site 別に分離
+- 事象:
+  - `mercari` / `yafuoku` の新しい run が実行継続中にもかかわらず、`120m` 超過で validator に `failed` 化され続けた
+- 原因:
+  - `apps/validator_agent/main.py` が全サイト一律 `VALIDATOR_STALE_RUNNING_MINUTES=120` で判定していた
+  - 長時間実行が普通のサイトでも、step 更新間隔や全体所要時間を考慮していなかった
+- 対応:
+  - `VALIDATOR_STALE_RUNNING_MINUTES_BY_SITE` を追加
+  - code default として `mercari:360,yafuoku:360,yahoofleama:360` を設定
+  - stale 判定、`site_running` 判定、ログ出力のすべてで site 別閾値を使用
+- 検証:
+  - `python3 -m py_compile apps/validator_agent/main.py`
+- 残課題:
+  - 本番反映後に `mercari` / `yafuoku` が `120m` ではなく `360m` までは失敗化されないことを確認する
+  - さらに安全にするなら「プロセス生存 + step 更新あり」は stale 対象外に固定する
