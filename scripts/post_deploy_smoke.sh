@@ -2,6 +2,7 @@
 set -euo pipefail
 
 APP_DIR="${KAGOYA_APP_DIR:-/root/supplier-scraper-main}"
+DASHBOARD_WEB_DIR="$APP_DIR/apps/dashboard-web"
 
 cd "$APP_DIR"
 
@@ -38,5 +39,24 @@ assert should_notify_failure("unexpected parser mismatch")
 
 print("post_deploy_import_smoke_ok")
 PY
+
+if [ -d "$DASHBOARD_WEB_DIR/app" ] && command -v node >/dev/null 2>&1; then
+  node - <<'JS'
+const fs = require("fs");
+const page = fs.readFileSync("apps/dashboard-web/app/page.tsx", "utf8");
+const required = [
+  "開始時刻",
+  "経過時間",
+  "次回予定",
+  "成功 / 失敗 / 実行中",
+  "残件 / 完了見込み",
+];
+const missing = required.filter((text) => !page.includes(text));
+if (missing.length) {
+  throw new Error(`dashboard page missing labels: ${missing.join(", ")}`);
+}
+console.log("post_deploy_dashboard_smoke_ok");
+JS
+fi
 
 echo "[post-deploy-smoke] completed"

@@ -159,3 +159,19 @@
   - `npm run build` は local の Next SWC バイナリ読み込み制限で完走不可だったため、GitHub Actions / 本番で確認が必要
 - 残課題:
   - `running` ではない最新 failed run について、直前までの件数進捗を保持して表示するかは別途検討
+
+### ダッシュボードが古い画面のまま配信されていた件
+- 事象:
+  - `marketpilot.jp` のダッシュボードが plain で古いレイアウトのまま表示され、新しい進捗項目が反映されなかった
+- 原因:
+  - `push -> deploy` は scraper / validator 用 service しか restart しておらず、`apps/dashboard-web` の `next build` と `marketpilot-dashboard-web.service` の restart を実施していなかった
+  - そのため server 上の source は更新されても、配信中の Next build は古いままだった
+- 対応:
+  - `scripts/deploy_kagoya.sh` に `apps/dashboard-web` の `npm run build` を追加
+  - deploy 後に `supplier-dashboard-api.service` と `marketpilot-dashboard-web.service` も restart するよう変更
+  - `scripts/post_deploy_smoke.sh` に dashboard 画面ラベルの存在確認を追加
+- 検証:
+  - `bash -n scripts/deploy_kagoya.sh`
+  - `bash -n scripts/post_deploy_smoke.sh`
+- 残課題:
+  - 本番 deploy 後に `http://127.0.0.1:3000/` の HTML が新しい進捗ラベルを返すことを確認する
