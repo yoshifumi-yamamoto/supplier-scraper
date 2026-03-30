@@ -100,3 +100,21 @@
   - `scrapers/common/error_classifier.py` を repo 管理に追加して再 deploy
 - 残課題:
   - deploy 後に `mercari` / `yahoofleama` を再度起動して即死しないことを確認する
+
+### `push -> deploy` 前後に smoke test を追加
+- 事象:
+  - deploy 自体は成功しても、server 上で import 不足や未管理ファイル漏れにより `runner` が起動直後に落ちるケースがあった
+- 原因:
+  - 既存 workflow は `rsync` と最小の `py_compile` のみで、重要 import や git 管理漏れを止められていなかった
+- 対応:
+  - `.github/workflows/deploy-kagoya.yml` に `preflight` job を追加
+  - `scripts/ci_preflight.sh` を追加
+  - `scripts/post_deploy_smoke.sh` を追加
+  - `scripts/deploy_kagoya.sh` から server 側 smoke を呼ぶよう変更
+  - preflight では `py_compile`、重要 import、既存テスト、重要ファイルの `git ls-files` 確認を行う
+- 検証:
+  - `bash -n scripts/ci_preflight.sh`
+  - `bash -n scripts/post_deploy_smoke.sh`
+  - `bash -n scripts/deploy_kagoya.sh`
+- 残課題:
+  - GitHub Actions 上で `requirements.txt` を入れた状態の preflight が green になることを確認する

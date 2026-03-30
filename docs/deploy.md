@@ -22,20 +22,27 @@
   - KAGOYA に接続できる秘密鍵全文
 
 ## サーバー側前提
-- KAGOYA 上の `$KAGOYA_APP_DIR` が git clone 済み
-- `origin` が push 元 repo を指している
+- KAGOYA 上の `$KAGOYA_APP_DIR` が存在している
 - `.venv` が作成済み
 - `supplier-mcp.service` が既存どおり動いている
 
 ## デプロイ内容
+- GitHub Actions 上で preflight を実行
+  - `py_compile`
+  - 重要 import smoke
+  - 対象テスト
+  - 重要ファイルが git 管理下にあることの確認
 - GitHub Actions runner から KAGOYA へ `rsync`
-- `.venv/bin/python3 -m py_compile` による最低限の検証
+- KAGOYA 上で post-deploy smoke を実行
+  - `py_compile`
+  - 重要 import smoke
 - `supplier-mcp.service` の restart
 
 ## 注意
 - これは `push -> rsync/restart` の最小構成
 - DB migration は自動適用していない
 - migration が必要な変更は、workflow を分けるか手順を明示する
+- server に直接コピーした緊急修正がある場合は、必ず同内容を repo に戻してから次回 deploy する
 
 ## 今回この形にした理由
 - 現在の障害は、修正自体より「修正が KAGOYA に入っていない」ことが原因だった

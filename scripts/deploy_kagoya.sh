@@ -8,11 +8,7 @@ cd "$APP_DIR"
 echo "[deploy] app_dir=$APP_DIR"
 
 if [ -x ".venv/bin/python3" ]; then
-  .venv/bin/python3 -m py_compile \
-    scrapers/common/items.py \
-    scrapers/sites/yafuoku/adapter.py \
-    apps/runner/main.py \
-    apps/validator_agent/main.py
+  /bin/bash ./scripts/post_deploy_smoke.sh
 fi
 
 if command -v systemctl >/dev/null 2>&1; then
