@@ -291,3 +291,27 @@
   - `dashboard_api` 実装
   - `dashboard-web` の `Capacity` セクション追加
   - 数日観測したうえで並列数増加の判断ルールを見直す
+
+### Capacity API と Overview 表示を実装
+- 事象:
+  - 並列数を上げる判断材料がダッシュボード上に不足していた
+- 対応:
+  - `apps/dashboard_api/main.py` に `GET /api/capacity` を追加
+  - `apps/dashboard-web/lib/api.ts` に `CapacitySummary` 型と fetch を追加
+  - `apps/dashboard-web/app/page.tsx` に `Capacity` パネルを追加
+- 表示内容:
+  - `cpu/load`
+  - `memory/swap`
+  - `running sites/runs`
+  - `stalled runs`
+  - `chrome/runner`
+  - `success/fail/retry/db_timeout/stale (1h)`
+  - `run success (24h)`
+  - `items/min`
+  - `parallel_level` と理由
+- 検証:
+  - `python3 -m py_compile apps/dashboard_api/main.py`
+  - `npm run build` は local の Next SWC バイナリ制限で失敗。GitHub Actions / 本番 build で確認が必要
+- 残課題:
+  - `resource guard` と同じしきい値に揃える
+  - 数日観測して `parallel_level` の条件を補正する

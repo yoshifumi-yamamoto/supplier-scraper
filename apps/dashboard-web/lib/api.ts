@@ -19,6 +19,40 @@ export type SystemMemory = {
   };
 };
 
+export type CapacitySummary = {
+  snapshot_at: string | null;
+  system: {
+    cpu_percent: number;
+    load_average: number[];
+    memory_percent: number;
+    swap_percent: number;
+    disk_free_gb: number;
+  };
+  runtime: {
+    running_sites: number;
+    running_runs: number;
+    stalled_runs: number;
+    chrome_processes: number;
+    runner_processes: number;
+  };
+  quality: {
+    success_runs_1h: number;
+    failed_runs_1h: number;
+    retry_runs_1h: number;
+    db_timeout_1h: number;
+    stale_running_1h: number;
+    run_success_rate_24h: number;
+  };
+  throughput: {
+    items_per_minute_running: number;
+    avg_run_minutes_by_site: Record<string, number>;
+  };
+  capacity_hint: {
+    parallel_level: "ok" | "caution" | "ng" | string;
+    reasons: string[];
+  };
+};
+
 export type MCPSummary = {
   kpis: {
     success_24h: number;
@@ -156,6 +190,49 @@ export async function fetchValidatorSummary(): Promise<ValidatorSummary> {
   };
   try {
     const res = await fetch(`${SERVER_API_BASE}/api/validator/summary`, { next: { revalidate: 30 } });
+    if (!res.ok) return fallback;
+    return res.json();
+  } catch {
+    return fallback;
+  }
+}
+
+export async function fetchCapacitySummary(): Promise<CapacitySummary> {
+  const fallback: CapacitySummary = {
+    snapshot_at: null,
+    system: {
+      cpu_percent: 0,
+      load_average: [0, 0, 0],
+      memory_percent: 0,
+      swap_percent: 0,
+      disk_free_gb: 0,
+    },
+    runtime: {
+      running_sites: 0,
+      running_runs: 0,
+      stalled_runs: 0,
+      chrome_processes: 0,
+      runner_processes: 0,
+    },
+    quality: {
+      success_runs_1h: 0,
+      failed_runs_1h: 0,
+      retry_runs_1h: 0,
+      db_timeout_1h: 0,
+      stale_running_1h: 0,
+      run_success_rate_24h: 0,
+    },
+    throughput: {
+      items_per_minute_running: 0,
+      avg_run_minutes_by_site: {},
+    },
+    capacity_hint: {
+      parallel_level: "ok",
+      reasons: [],
+    },
+  };
+  try {
+    const res = await fetch(`${SERVER_API_BASE}/api/capacity`, { next: { revalidate: 15 } });
     if (!res.ok) return fallback;
     return res.json();
   } catch {

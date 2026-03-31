@@ -1,4 +1,4 @@
-import { fetchMCPSummary, fetchOverview, fetchSystemMemory, fetchSystemSchedule, fetchValidatorSummary } from "@/lib/api";
+import { fetchCapacitySummary, fetchMCPSummary, fetchOverview, fetchSystemMemory, fetchSystemSchedule, fetchValidatorSummary } from "@/lib/api";
 import Link from "next/link";
 
 type SiteView = {
@@ -68,10 +68,17 @@ function aiSeverityLabel(severity?: string) {
   return "-";
 }
 
+function capacityTone(level: string) {
+  if (level === "ng") return "ng";
+  if (level === "caution") return "warn";
+  return "ok";
+}
+
 export default async function Page() {
   const overview = await fetchOverview();
   const systemMemory = await fetchSystemMemory();
   const mcp = await fetchMCPSummary();
+  const capacity = await fetchCapacitySummary();
   const schedule = await fetchSystemSchedule();
   const validator = await fetchValidatorSummary();
 
@@ -120,6 +127,7 @@ export default async function Page() {
   const runningWithProgress = sites.filter((s) => s.status === "running" && s.stepSummary?.totalItems != null);
   const totalProcessingItems = runningWithProgress.reduce((sum, s) => sum + (s.stepSummary?.totalItems ?? 0), 0);
   const totalProcessedItems = runningWithProgress.reduce((sum, s) => sum + (s.stepSummary?.processedItems ?? 0), 0);
+  const capTone = capacityTone(capacity.capacity_hint.parallel_level);
 
   return (
     <main className="dashboard">
@@ -272,6 +280,68 @@ export default async function Page() {
       </section>
 
       <section className="bottom-grid">
+        <article className={`panel tone-${capTone}`}>
+          <div className="panel-head">
+            <h3>Capacity</h3>
+            <span>{fmt(capacity.snapshot_at)}</span>
+          </div>
+          <div className="ops-grid">
+            <div className="ops-card">
+              <p>Parallel判定</p>
+              <h4>{capacity.capacity_hint.parallel_level}</h4>
+            </div>
+            <div className="ops-card">
+              <p>CPU / Load1</p>
+              <h4>{pct(capacity.system.cpu_percent)} / {capacity.system.load_average[0] ?? 0}</h4>
+            </div>
+            <div className="ops-card">
+              <p>Memory / Swap</p>
+              <h4>{pct(capacity.system.memory_percent)} / {pct(capacity.system.swap_percent)}</h4>
+            </div>
+            <div className="ops-card">
+              <p>Disk Free</p>
+              <h4>{capacity.system.disk_free_gb}GB</h4>
+            </div>
+            <div className="ops-card">
+              <p>Running Sites / Runs</p>
+              <h4>{capacity.runtime.running_sites} / {capacity.runtime.running_runs}</h4>
+            </div>
+            <div className="ops-card">
+              <p>Stalled Runs</p>
+              <h4>{capacity.runtime.stalled_runs}</h4>
+            </div>
+            <div className="ops-card">
+              <p>Chrome / Runner</p>
+              <h4>{capacity.runtime.chrome_processes} / {capacity.runtime.runner_processes}</h4>
+            </div>
+            <div className="ops-card">
+              <p>Items/min</p>
+              <h4>{capacity.throughput.items_per_minute_running}</h4>
+            </div>
+            <div className="ops-card">
+              <p>Success / Fail (1h)</p>
+              <h4>{capacity.quality.success_runs_1h} / {capacity.quality.failed_runs_1h}</h4>
+            </div>
+            <div className="ops-card">
+              <p>Retry / DB timeout (1h)</p>
+              <h4>{capacity.quality.retry_runs_1h} / {capacity.quality.db_timeout_1h}</h4>
+            </div>
+            <div className="ops-card">
+              <p>Stale (1h)</p>
+              <h4>{capacity.quality.stale_running_1h}</h4>
+            </div>
+            <div className="ops-card">
+              <p>Run Success (24h)</p>
+              <h4>{pct(capacity.quality.run_success_rate_24h * 100)}</h4>
+            </div>
+          </div>
+          <div className="code-line" style={{ marginTop: 16 }}>
+            {capacity.capacity_hint.reasons.length > 0
+              ? `並列判断理由: ${capacity.capacity_hint.reasons.join(" / ")}`
+              : "並列増加を止める明確な要因は検出されていません"}
+          </div>
+        </article>
+
         <article className="panel action-panel">
           <div className="panel-head">
             <h3>抽出ツール</h3>

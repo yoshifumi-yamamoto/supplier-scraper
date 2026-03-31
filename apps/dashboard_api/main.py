@@ -85,6 +85,7 @@ SURUGAYA_EXTRACT_HISTORY_STATE = os.path.join(SURUGAYA_EXTRACT_STATE_DIR, "histo
 
 CACHE_TTL_OVERVIEW = int(os.getenv("DASHBOARD_CACHE_TTL_OVERVIEW", "10"))
 CACHE_TTL_MCP_SUMMARY = int(os.getenv("DASHBOARD_CACHE_TTL_MCP_SUMMARY", "10"))
+CACHE_TTL_CAPACITY = int(os.getenv("DASHBOARD_CACHE_TTL_CAPACITY", "15"))
 CACHE_TTL_MEMORY = int(os.getenv("DASHBOARD_CACHE_TTL_MEMORY", "5"))
 CACHE_TTL_SCHEDULE = int(os.getenv("DASHBOARD_CACHE_TTL_SCHEDULE", "60"))
 CACHE_TTL_VALIDATOR = int(os.getenv("DASHBOARD_CACHE_TTL_VALIDATOR", "30"))
@@ -393,6 +394,175 @@ def _process_counts() -> dict[str, int]:
         except Exception:  # noqa: BLE001
             continue
     return {"chrome_processes": chrome, "runner_processes": runner}
+
+
+def _safe_load_average() -> list[float]:
+    try:
+        return [round(float(v), 2) for v in os.getloadavg()]
+    except (AttributeError, OSError):
+        return [0.0, 0.0, 0.0]
+
+
+def _build_capacity_summary() -> dict[str, Any]:
+    now_utc = datetime.now(timezone.utc)
+    since_1h = now_utc - timedelta(hours=1)
+    since_24h = now_utc - timedelta(hours=24)
+    runs_data = _fetch_runs(limit=500)
+    latest_by_site: dict[str, dict[str, Any]] = {}
+    success_runs_1h = 0
+    failed_runs_1h = 0
+    db_timeout_1h = 0
+    stale_running_1h = 0
+    success_runs_24h = 0
+    finished_runs_24h = 0
+
+    for row in runs_data:
+        site = row.get("site") or "unknown"
+        status = row.get("status") or "unknown"
+        started_at = row.get("started_at")
+        finished_at = row.get("finished_at")
+        error_summary = row.get("error_summary") or ""
+        trigger_type = row.get("trigger_type") or ""
+        started_dt = _parse_ts(started_at)
+        finished_dt = _parse_ts(finished_at)
+        current_dt = finished_dt or started_dt
+
+        if started_dt and started_dt >= since_24h and status in {"success", "failed"}:
+            finished_runs_24h += 1
+            if status == "success":
+                success_runs_24h += 1
+
+        if current_dt and current_dt >= since_1h:
+            if status == "success":
+                success_runs_1h += 1
+            elif status == "failed":
+                failed_runs_1h += 1
+                error_type = classify_error(error_summary)
+                if error_type == "db_timeout":
+                    db_timeout_1h += 1
+                if "stale" in error_summary.lower():
+                    stale_running_1h += 1
+            if trigger_type == "retry":
+                pass
+
+        prev = latest_by_site.get(site)
+        if not prev or ((started_at or "") > (prev.get("started_at") or "")):
+            latest_by_site[site] = {
+                "id": row.get("id"),
+                "site": site,
+                "status": status,
+                "started_at": started_at,
+                "finished_at": finished_at,
+                "error_summary": error_summary,
+                "trigger_type": trigger_type,
+            }
+
+    stalled_runs = 0
+    running_runs = 0
+    running_sites = 0
+    total_processed_running = 0
+    total_elapsed_running = 0
+
+    for site, row in latest_by_site.items():
+        process_alive = _site_process_running(site)
+        step_summary = _summarize_run_steps(row) if row.get("status") == "running" else None
+        display_status, _ = _derive_dashboard_status(row, step_summary, process_alive, now_utc)
+        if row.get("status") == "running":
+            running_runs += 1
+        if display_status == "running":
+            running_sites += 1
+        if display_status == "stalled":
+            stalled_runs += 1
+
+        started_dt = _parse_ts(row.get("started_at"))
+        elapsed_minutes = None
+        if started_dt:
+            end_dt = now_utc if row.get("status") == "running" else (_parse_ts(row.get("finished_at")) or now_utc)
+            elapsed_minutes = max(int((end_dt - started_dt).total_seconds() // 60), 0)
+
+        processed_items = (step_summary or {}).get("processed_items")
+        if row.get("status") == "running" and elapsed_minutes and processed_items:
+            total_processed_running += int(processed_items)
+            total_elapsed_running += max(int(elapsed_minutes), 1)
+
+    avg_run_minutes_by_site: dict[str, int] = {}
+    duration_buckets: dict[str, list[int]] = {}
+    for row in runs_data:
+        site = row.get("site") or "unknown"
+        started_dt = _parse_ts(row.get("started_at"))
+        finished_dt = _parse_ts(row.get("finished_at"))
+        if not started_dt or not finished_dt or finished_dt < started_dt:
+            continue
+        duration = max(int((finished_dt - started_dt).total_seconds() // 60), 0)
+        duration_buckets.setdefault(site, []).append(duration)
+    for site, durations in duration_buckets.items():
+        if durations:
+            avg_run_minutes_by_site[site] = round(sum(durations) / len(durations))
+
+    retry_runs_1h = 0
+    for row in runs_data:
+        started_dt = _parse_ts(row.get("started_at"))
+        if started_dt and started_dt >= since_1h and (row.get("trigger_type") or "") == "retry":
+            retry_runs_1h += 1
+
+    proc = _process_counts()
+    vm = psutil.virtual_memory()
+    sm = psutil.swap_memory()
+    cpu_percent = psutil.cpu_percent(interval=0.2)
+    disk = psutil.disk_usage("/")
+    items_per_minute_running = round(total_processed_running / total_elapsed_running, 2) if total_elapsed_running > 0 else 0.0
+
+    capacity_reasons: list[str] = []
+    parallel_level = "ok"
+    if stalled_runs > 0:
+        capacity_reasons.append(f"stalled_runs={stalled_runs}")
+    if db_timeout_1h > 0:
+        capacity_reasons.append(f"db_timeout_1h={db_timeout_1h}")
+    if sm.percent >= 40:
+        capacity_reasons.append(f"swap_percent={sm.percent}")
+    if proc["chrome_processes"] > 8:
+        capacity_reasons.append(f"chrome_processes={proc['chrome_processes']}")
+    if vm.percent >= 70:
+        capacity_reasons.append(f"memory_percent={vm.percent}")
+
+    if stalled_runs > 0 or db_timeout_1h > 0 or sm.percent >= 40:
+        parallel_level = "ng"
+    elif proc["chrome_processes"] > 8 or vm.percent >= 70 or sm.percent >= 20:
+        parallel_level = "caution"
+
+    return {
+        "snapshot_at": now_utc.isoformat(),
+        "system": {
+            "cpu_percent": cpu_percent,
+            "load_average": _safe_load_average(),
+            "memory_percent": vm.percent,
+            "swap_percent": sm.percent,
+            "disk_free_gb": round(disk.free / 1024 / 1024 / 1024, 2),
+        },
+        "runtime": {
+            "running_sites": running_sites,
+            "running_runs": running_runs,
+            "stalled_runs": stalled_runs,
+            "chrome_processes": proc["chrome_processes"],
+            "runner_processes": proc["runner_processes"],
+        },
+        "quality": {
+            "success_runs_1h": success_runs_1h,
+            "failed_runs_1h": failed_runs_1h,
+            "retry_runs_1h": retry_runs_1h,
+            "db_timeout_1h": db_timeout_1h,
+            "stale_running_1h": stale_running_1h,
+            "run_success_rate_24h": round(success_runs_24h / finished_runs_24h, 2) if finished_runs_24h else 0.0,
+        },
+        "throughput": {
+            "items_per_minute_running": items_per_minute_running,
+            "avg_run_minutes_by_site": avg_run_minutes_by_site,
+        },
+        "capacity_hint": {
+            "parallel_level": parallel_level,
+            "reasons": capacity_reasons,
+        },
+    }
 
 
 def _is_valid_mercari_search_url(value: str) -> bool:
@@ -1366,6 +1536,14 @@ def system_schedule() -> dict:
         return _cached("system_schedule", CACHE_TTL_SCHEDULE, build)
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(status_code=500, content={"error": "schedule_fetch_failed", "message": str(exc)})
+
+
+@app.get("/api/capacity")
+def capacity_summary() -> dict:
+    try:
+        return _cached("capacity_summary", CACHE_TTL_CAPACITY, _build_capacity_summary)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(status_code=500, content={"error": "capacity_summary_failed", "message": str(exc)})
 
 
 @app.get("/api/mcp/summary")
