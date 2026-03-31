@@ -9,6 +9,7 @@ SITE_TIMEOUT_SEC=${MCP_SITE_TIMEOUT_SEC:-5400}
 # Default order follows current operational priority.
 SITES_CSV=${MCP_SITES_CSV:-mercari,yafuoku,hardoff,yodobashi,rakuma,yahoofleama,secondstreet,kitamura}
 DEFAULT_INTERVAL_MIN=${MCP_DEFAULT_INTERVAL_MIN:-720}
+BLOCK_OTHER_SITES_WHEN_MERCARI_RUNNING=${MCP_BLOCK_OTHER_SITES_WHEN_MERCARI_RUNNING:-true}
 
 # Per-site minimum interval (minutes)
 declare -A INTERVAL_MIN=(
@@ -68,6 +69,19 @@ print(running)
 PY
 }
 
+should_block_for_mercari() {
+  local site="$1"
+  if [ "${BLOCK_OTHER_SITES_WHEN_MERCARI_RUNNING,,}" != "true" ]; then
+    echo "false"
+    return 0
+  fi
+  if [ "$site" = "mercari" ]; then
+    echo "false"
+    return 0
+  fi
+  is_site_running "mercari"
+}
+
 should_run_site() {
   local site="$1"
   local interval="${INTERVAL_MIN[$site]:-$DEFAULT_INTERVAL_MIN}"
@@ -118,6 +132,11 @@ main() {
   for site in "${sites[@]}"; do
     site="${site// /}"
     [ -z "$site" ] && continue
+
+    if [ "$(should_block_for_mercari "$site" || echo false)" = "true" ]; then
+      log "skip site=$site reason=mercari_running_guard"
+      continue
+    fi
 
     if [ "$(is_site_running "$site" || echo false)" = "true" ]; then
       log "skip site=$site reason=already_running"

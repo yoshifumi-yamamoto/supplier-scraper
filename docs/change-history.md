@@ -456,3 +456,12 @@
 - 方針:
   - まず `yafuoku` を `2 shard` で計測
   - まだ不足なら `mercari` と同様に shard 数を段階的に上げる
+### Mercari 実行中は他サイトを自動起動しない orchestrator ガードを追加
+
+- 目的:
+  - Mercari 3 shard 計測中に他サイト起動で CPU 競合させない
+- 対応:
+  - `scripts/mcp_orchestrator.sh` に `MCP_BLOCK_OTHER_SITES_WHEN_MERCARI_RUNNING` を追加
+  - `mercari` が running の間は他サイトを `mercari_running_guard` で skip
+- 備考:
+  - 既定は `true`。運用で戻す時は env で `false` にできる
