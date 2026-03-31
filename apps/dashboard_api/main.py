@@ -368,6 +368,8 @@ def _derive_dashboard_status(
     processed_items = (step_summary or {}).get("processed_items")
     running_items = (step_summary or {}).get("running_items")
 
+    if activity_age_minutes is not None and activity_age_minutes >= 60:
+        return "stalled", "no_recent_step_activity"
     if process_alive:
         return "running", None
     if total_items is not None and processed_items is not None and processed_items >= total_items and (running_items or 0) == 0:

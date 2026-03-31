@@ -260,6 +260,8 @@ export default async function Page() {
                   ? site.errorSummary.slice(0, 90)
                   : site.statusReason === "process_missing_and_no_recent_step_activity"
                     ? "実プロセス不在かつ直近ステップ更新なし"
+                    : site.statusReason === "no_recent_step_activity"
+                      ? "直近ステップ更新なし"
                     : site.statusReason === "process_missing_but_all_items_processed"
                       ? "実プロセス不在だが全件処理済み"
                       : "最新エラーなし"}
