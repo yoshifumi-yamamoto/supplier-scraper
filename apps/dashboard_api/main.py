@@ -304,8 +304,16 @@ def _summarize_run_steps(run: dict[str, Any]) -> dict[str, Any]:
         if started and finished and finished >= started:
             durations_sec.append((finished - started).total_seconds())
     avg_step_sec = round(sum(durations_sec) / len(durations_sec), 1) if durations_sec else None
+    observed_items_per_min = None
+    started_dt = _parse_ts(run.get("started_at"))
+    if started_dt and processed > 0:
+        elapsed_seconds = max((datetime.now(timezone.utc) - started_dt).total_seconds(), 1.0)
+        observed_items_per_min = round(processed / (elapsed_seconds / 60.0), 2)
     eta_at = None
-    if avg_step_sec and remaining is not None and remaining > 0:
+    if observed_items_per_min and remaining is not None and remaining > 0:
+        eta_seconds = (remaining / observed_items_per_min) * 60.0
+        eta_at = (datetime.now(timezone.utc) + timedelta(seconds=eta_seconds)).isoformat()
+    elif avg_step_sec and remaining is not None and remaining > 0:
         eta_at = (datetime.now(timezone.utc) + timedelta(seconds=avg_step_sec * remaining)).isoformat()
 
     return {
@@ -318,6 +326,7 @@ def _summarize_run_steps(run: dict[str, Any]) -> dict[str, Any]:
         "progress_percent": round((processed / total_items) * 100) if total_items else None,
         "last_step_at": last_step_at.isoformat() if last_step_at else None,
         "avg_step_sec": avg_step_sec,
+        "items_per_min": observed_items_per_min,
         "eta_at": eta_at,
     }
 
@@ -335,6 +344,7 @@ def _merge_step_summaries(step_summaries: list[dict[str, Any]]) -> dict[str, Any
             "progress_percent": None,
             "last_step_at": None,
             "avg_step_sec": None,
+            "items_per_min": None,
             "eta_at": None,
         }
 
@@ -349,6 +359,7 @@ def _merge_step_summaries(step_summaries: list[dict[str, Any]]) -> dict[str, Any
 
     last_step_dt: datetime | None = None
     avg_step_values: list[float] = []
+    items_per_min_values: list[float] = []
     eta_dt: datetime | None = None
     for summary in valid:
         last_raw = summary.get("last_step_at")
@@ -358,12 +369,16 @@ def _merge_step_summaries(step_summaries: list[dict[str, Any]]) -> dict[str, Any
         avg_raw = summary.get("avg_step_sec")
         if isinstance(avg_raw, (int, float)):
             avg_step_values.append(float(avg_raw))
+        ipm_raw = summary.get("items_per_min")
+        if isinstance(ipm_raw, (int, float)):
+            items_per_min_values.append(float(ipm_raw))
         eta_raw = summary.get("eta_at")
         eta_parsed = _parse_ts(eta_raw)
         if eta_parsed and (eta_dt is None or eta_parsed > eta_dt):
             eta_dt = eta_parsed
 
     avg_step_sec = round(sum(avg_step_values) / len(avg_step_values), 1) if avg_step_values else None
+    items_per_min = round(sum(items_per_min_values), 2) if items_per_min_values else None
 
     return {
         "total_items": total_items,
@@ -375,6 +390,7 @@ def _merge_step_summaries(step_summaries: list[dict[str, Any]]) -> dict[str, Any
         "progress_percent": progress_percent,
         "last_step_at": last_step_dt.isoformat() if last_step_dt else None,
         "avg_step_sec": avg_step_sec,
+        "items_per_min": items_per_min,
         "eta_at": eta_dt.isoformat() if eta_dt else None,
     }
 
