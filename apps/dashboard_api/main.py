@@ -89,6 +89,7 @@ CACHE_TTL_CAPACITY = int(os.getenv("DASHBOARD_CACHE_TTL_CAPACITY", "15"))
 CACHE_TTL_MEMORY = int(os.getenv("DASHBOARD_CACHE_TTL_MEMORY", "5"))
 CACHE_TTL_SCHEDULE = int(os.getenv("DASHBOARD_CACHE_TTL_SCHEDULE", "60"))
 CACHE_TTL_VALIDATOR = int(os.getenv("DASHBOARD_CACHE_TTL_VALIDATOR", "30"))
+RUN_STEPS_PAGE_SIZE = int(os.getenv("RUN_STEPS_PAGE_SIZE", "1000"))
 _API_CACHE: dict[str, dict[str, Any]] = {}
 MCP_DEFAULT_INTERVAL_MIN = int(os.getenv("MCP_DEFAULT_INTERVAL_MIN", "720"))
 MCP_ORCHESTRATOR_TICK_MIN = int(os.getenv("MCP_ORCHESTRATOR_TICK_MIN", "10"))
@@ -244,17 +245,28 @@ def _fetch_run_steps(run_id: str, limit: int = 20000) -> list[dict[str, Any]]:
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
     }
-    params = {
-        "select": "id,run_id,step_name,status,started_at,finished_at,message,updated_at",
-        "run_id": f"eq.{run_id}",
-        "order": "started_at.asc",
-        "limit": str(limit),
-    }
-    res = requests.get(url, headers=headers, params=params, timeout=60)
-    if res.status_code >= 400:
-        return []
-    data = res.json()
-    return data if isinstance(data, list) else []
+    page_size = max(min(limit, RUN_STEPS_PAGE_SIZE), 1)
+    fetched: list[dict[str, Any]] = []
+    offset = 0
+    while offset < limit:
+        params = {
+            "select": "id,run_id,step_name,status,started_at,finished_at,message,updated_at",
+            "run_id": f"eq.{run_id}",
+            "order": "started_at.asc",
+            "limit": str(min(page_size, limit - offset)),
+            "offset": str(offset),
+        }
+        res = requests.get(url, headers=headers, params=params, timeout=60)
+        if res.status_code >= 400:
+            return fetched
+        data = res.json()
+        if not isinstance(data, list) or not data:
+            break
+        fetched.extend(data)
+        if len(data) < page_size:
+            break
+        offset += len(data)
+    return fetched
 
 
 def _site_interval_minutes(site: str) -> int:

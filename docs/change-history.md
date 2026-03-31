@@ -430,3 +430,16 @@
 - 残課題:
   - 本番で `items_per_min` がどこまで改善するか確認する
   - 効果が不足する場合は `yafuoku` を shard 候補に上げる
+### Dashboard API の step 集計を 1000 行上限からページング対応へ修正
+
+- 事象:
+  - `mercari` / `yafuoku` / `yahoofleama` の進捗が `999` 件で頭打ちに見えた
+  - 実際には `scrape_run_steps` は増え続けていたが、ダッシュボード API が先頭 1000 行しか読めていなかった
+- 原因:
+  - Supabase REST の実効取得上限をまたいだ時に `apps/dashboard_api/main.py` の `_fetch_run_steps()` が 1 リクエストで終了していた
+- 対応:
+  - `_fetch_run_steps()` を `offset + limit` のページングに変更
+  - `RUN_STEPS_PAGE_SIZE` を環境変数化
+  - 回帰用に `tests/test_dashboard_api_run_steps.py` を追加
+- 残課題:
+  - KAGOYA 反映後に `/api/mcp/summary` の `processed_items` が `999` を超えて追随することを確認する
