@@ -18,7 +18,16 @@ def run_pipeline(run_id: str) -> dict:
     fetch_step = start_step(run_id=run_id, step_name='fetch_items')
     try:
         items = fetch_active_items_by_domain('netmall.hardoff.co.jp')
-        finish_step(fetch_step, status='success', message=f'fetched={len(items)}')
+        if not items:
+            finish_step(fetch_step, status='success', message='hardoff no target items')
+            json_log('info', 'hardoff no target items', run_id=run_id, site='hardoff')
+            return {
+                'run_id': run_id,
+                'site': 'hardoff',
+                'status': 'success',
+                'message': 'hardoff pipeline completed: 0 items',
+            }
+        finish_step(fetch_step, status='success', message=f'fetched {len(items)} items')
     except Exception as exc:  # noqa: BLE001
         finish_step(fetch_step, status='failed', message=str(exc))
         return {
@@ -28,39 +37,39 @@ def run_pipeline(run_id: str) -> dict:
             'message': f'fetch failed: {exc}',
         }
 
-    if not items:
-        json_log('info', 'hardoff no target items', run_id=run_id, site='hardoff')
-        return {
-            'run_id': run_id,
-            'site': 'hardoff',
-            'status': 'success',
-            'message': 'hardoff pipeline completed: 0 items',
-        }
-
     driver = build_chrome(headless=True)
-    checked = 0
+    processed = 0
     in_stock = 0
     out_of_stock = 0
     unknown = 0
-    step_id = start_step(run_id=run_id, step_name='check_stock')
     try:
         for row in items:
+            ebay_item_id = row.get('ebay_item_id')
+            if not ebay_item_id:
+                continue
+
+            step_id = start_step(run_id=run_id, step_name=f'check:{ebay_item_id}')
             status = ScrapeStatus.UNKNOWN
             try:
                 status, _ = check_stock_status(driver, row.get('stocking_url') or '')
             except Exception as exc:  # noqa: BLE001
                 json_log('warning', 'hardoff check failed', site='hardoff', ebay_item_id=row.get('ebay_item_id'), error=str(exc))
                 status = ScrapeStatus.UNKNOWN
+                update_item_stock(ebay_item_id, '不明', is_scraped=False)
+                unknown += 1
+                finish_step(step_id, status='success', message=f'check failed, marked unknown: {exc}')
+                processed += 1
+                continue
             jp = _to_japanese(status)
-            update_item_stock(row['ebay_item_id'], jp, is_scraped=True)
-            checked += 1
+            update_item_stock(ebay_item_id, jp, is_scraped=(status != ScrapeStatus.UNKNOWN))
             if status == ScrapeStatus.IN_STOCK:
                 in_stock += 1
             elif status == ScrapeStatus.OUT_OF_STOCK:
                 out_of_stock += 1
             else:
                 unknown += 1
-        finish_step(step_id, status='success', message=f'checked={checked} in={in_stock} out={out_of_stock} unknown={unknown}')
+            finish_step(step_id, status='success', message=jp)
+            processed += 1
     except Exception as exc:  # noqa: BLE001
         finish_step(step_id, status='failed', message=str(exc))
         return {
@@ -79,5 +88,5 @@ def run_pipeline(run_id: str) -> dict:
         'run_id': run_id,
         'site': 'hardoff',
         'status': 'success',
-        'message': f'hardoff pipeline completed: checked={checked} in={in_stock} out={out_of_stock} unknown={unknown}',
+        'message': f'hardoff pipeline completed: checked={processed} in={in_stock} out={out_of_stock} unknown={unknown}',
     }
