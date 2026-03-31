@@ -390,3 +390,14 @@
 - 残課題:
   - 本番の `chrome_processes` と `items/min` を見て worker 数 `3` が妥当か確認する
   - server capacity が許すなら `4` 以上への引き上げを検討する
+
+### Mercari の page ready 後 sleep を site 限定で短縮
+- 事象:
+  - `mercari` は item ごとに `wait_ready()` の既定 `2秒 sleep` を踏んでおり、browser worker を増やしても step 秒数が下がり切らなかった
+- 原因:
+  - `scrapers/common/browser.py` の共通 `wait_ready()` が全サイト向けに保守的で、Mercari の item 単位巡回には長すぎた
+- 対応:
+  - `scrapers/sites/mercari/checker.py` で `MERCARI_READY_SLEEP_SECONDS` を追加
+  - `wait_ready(driver, sleep_sec=...)` を使って、Mercari だけ既定 `0.4秒` に短縮
+- 残課題:
+  - shops 系 URL で false negative が増えないか本番 run で確認する

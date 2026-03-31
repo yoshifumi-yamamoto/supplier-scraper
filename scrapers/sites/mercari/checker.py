@@ -23,6 +23,7 @@ SHOPS_OOS_XPATH = '//p[@data-testid="out-of-stock"]'
 LOAD_FAILED_XPATH = '//*[contains(text(), "ページの読み込みに失敗しました")]'
 PURCHASE_WAIT_SECONDS = float(os.getenv("MERCARI_PURCHASE_WAIT_SECONDS", "1.5"))
 REFRESH_RETRY_WAIT_SECONDS = float(os.getenv("MERCARI_REFRESH_RETRY_WAIT_SECONDS", "1.5"))
+READY_SLEEP_SECONDS = float(os.getenv("MERCARI_READY_SLEEP_SECONDS", "0.4"))
 
 
 def normalize_mercari_url(raw_url: str | None) -> str | None:
@@ -92,7 +93,7 @@ def _detect_standard_status(driver) -> tuple[ScrapeStatus, str]:
     error_text_elements = driver.find_elements(By.XPATH, LOAD_FAILED_XPATH)
     if error_text_elements:
         driver.refresh()
-        wait_ready(driver)
+        wait_ready(driver, sleep_sec=READY_SLEEP_SECONDS)
         try:
             WebDriverWait(driver, REFRESH_RETRY_WAIT_SECONDS).until(
                 EC.presence_of_element_located((By.XPATH, PURCHASE_BUTTON_XPATH))
@@ -123,7 +124,7 @@ def check_stock_status(driver, url: str) -> tuple[ScrapeStatus, str]:
         if 'invalid argument' in str(exc).lower():
             return ScrapeStatus.UNKNOWN, 'invalid_url_argument'
         raise
-    wait_ready(driver)
+    wait_ready(driver, sleep_sec=READY_SLEEP_SECONDS)
     is_shops = 'shops' in normalized_url
     if is_shops:
         return _detect_mercari_shops_status(driver)
