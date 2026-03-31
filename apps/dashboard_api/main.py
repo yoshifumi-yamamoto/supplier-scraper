@@ -1616,7 +1616,7 @@ def mcp_summary() -> dict:
                     next_run_at = _ceil_to_tick(eligible_at, MCP_ORCHESTRATOR_TICK_MIN).isoformat()
 
                 process_alive = _site_process_running(site)
-                step_summary = _summarize_run_steps(row) if row.get("status") == "running" else None
+                step_summary = _summarize_run_steps(row)
                 display_status, status_reason = _derive_dashboard_status(row, step_summary, process_alive, now_utc)
 
                 row["elapsed_minutes"] = elapsed_minutes
