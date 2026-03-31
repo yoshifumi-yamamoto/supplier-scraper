@@ -4,6 +4,9 @@ import Link from "next/link";
 type SiteView = {
   site: string;
   status: string;
+  rawStatus: string;
+  statusReason: string | null;
+  processAlive: boolean;
   lastRun: string | null;
   startedAt: string | null;
   errorSummary: string;
@@ -47,6 +50,7 @@ function mins(v?: number | null) {
 function siteStatus(status: string) {
   if (status === "success") return { label: "正常", tone: "ok" };
   if (status === "running") return { label: "稼働中", tone: "warn" };
+  if (status === "stalled") return { label: "停止疑い", tone: "ng" };
   return { label: "エラー", tone: "ng" };
 }
 
@@ -80,7 +84,10 @@ export default async function Page() {
     const latest = latestMap.get(name);
     return {
       site: name,
-      status: latest?.status ?? ov?.latest_status ?? "unknown",
+      status: latest?.display_status ?? latest?.status ?? ov?.latest_status ?? "unknown",
+      rawStatus: latest?.status ?? ov?.latest_status ?? "unknown",
+      statusReason: latest?.display_status_reason ?? null,
+      processAlive: latest?.process_alive ?? false,
       lastRun: latest?.finished_at ?? latest?.started_at ?? ov?.last_run ?? null,
       startedAt: latest?.started_at ?? null,
       errorSummary: latest?.error_summary ?? "",
@@ -168,7 +175,7 @@ export default async function Page() {
               <div className="site-head">
                 <div>
                   <h3>{site.site}</h3>
-                  <p>{site.status}</p>
+                  <p>{site.rawStatus}</p>
                 </div>
                 <span className={`pill pill-${st.tone}`}>{st.label}</span>
               </div>
@@ -249,7 +256,13 @@ export default async function Page() {
               </div>
 
               <div className="code-line">
-                {site.errorSummary ? site.errorSummary.slice(0, 90) : "最新エラーなし"}
+                {site.errorSummary
+                  ? site.errorSummary.slice(0, 90)
+                  : site.statusReason === "process_missing_and_no_recent_step_activity"
+                    ? "実プロセス不在かつ直近ステップ更新なし"
+                    : site.statusReason === "process_missing_but_all_items_processed"
+                      ? "実プロセス不在だが全件処理済み"
+                      : "最新エラーなし"}
               </div>
             </article>
           );

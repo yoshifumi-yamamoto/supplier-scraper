@@ -321,6 +321,53 @@ def _summarize_run_steps(run: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _site_process_running(site: str) -> bool:
+    site = (site or "").strip()
+    if not site:
+        return False
+    needle = f"apps/runner/main.py --site {site}"
+    for proc in psutil.process_iter(["cmdline"]):
+        try:
+            cmd = " ".join(proc.info.get("cmdline") or [])
+        except Exception:  # noqa: BLE001
+            continue
+        if needle in cmd:
+            return True
+    return False
+
+
+def _derive_dashboard_status(
+    row: dict[str, Any],
+    step_summary: dict[str, Any] | None,
+    process_alive: bool,
+    now_utc: datetime,
+) -> tuple[str, str | None]:
+    status = row.get("status") or "unknown"
+    if status != "running":
+        return status, None
+
+    last_activity = _parse_ts(
+        (step_summary or {}).get("last_step_at")
+        or row.get("finished_at")
+        or row.get("started_at")
+    )
+    activity_age_minutes = None
+    if last_activity:
+        activity_age_minutes = max(int((now_utc - last_activity).total_seconds() // 60), 0)
+
+    total_items = (step_summary or {}).get("total_items")
+    processed_items = (step_summary or {}).get("processed_items")
+    running_items = (step_summary or {}).get("running_items")
+
+    if process_alive:
+        return "running", None
+    if total_items is not None and processed_items is not None and processed_items >= total_items and (running_items or 0) == 0:
+        return "success", "process_missing_but_all_items_processed"
+    if activity_age_minutes is not None and activity_age_minutes >= 15:
+        return "stalled", "process_missing_and_no_recent_step_activity"
+    return "running", "process_missing_recent_activity"
+
+
 def _process_counts() -> dict[str, int]:
     chrome = 0
     runner = 0
@@ -1379,10 +1426,17 @@ def mcp_summary() -> dict:
                     eligible_at = started_dt + timedelta(minutes=interval_min)
                     next_run_at = _ceil_to_tick(eligible_at, MCP_ORCHESTRATOR_TICK_MIN).isoformat()
 
+                process_alive = _site_process_running(site)
+                step_summary = _summarize_run_steps(row) if row.get("status") == "running" else None
+                display_status, status_reason = _derive_dashboard_status(row, step_summary, process_alive, now_utc)
+
                 row["elapsed_minutes"] = elapsed_minutes
                 row["next_run_at"] = next_run_at
                 row["interval_minutes"] = interval_min
-                row["step_summary"] = _summarize_run_steps(row) if row.get("status") == "running" else None
+                row["step_summary"] = step_summary
+                row["process_alive"] = process_alive
+                row["display_status"] = display_status
+                row["display_status_reason"] = status_reason
 
             proc = _process_counts()
             vm = psutil.virtual_memory()

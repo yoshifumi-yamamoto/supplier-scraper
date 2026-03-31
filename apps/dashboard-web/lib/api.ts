@@ -29,6 +29,9 @@ export type MCPSummary = {
   latest_by_site: {
     site: string;
     status: string;
+    display_status?: string;
+    display_status_reason?: string | null;
+    process_alive?: boolean;
     started_at: string | null;
     finished_at: string | null;
     error_summary: string;
