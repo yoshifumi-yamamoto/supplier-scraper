@@ -122,6 +122,13 @@ class MercariAdapterTests(unittest.TestCase):
         self.assertEqual(len(chunks), 3)
         self.assertEqual([len(chunk) for chunk in chunks], [3, 2, 2])
 
+    def test_select_shard_items_picks_subset(self) -> None:
+        rows = [{"ebay_item_id": f"item-{idx}"} for idx in range(6)]
+
+        shard_rows = mercari_adapter._select_shard_items(rows, 1, 3)
+
+        self.assertEqual([row["ebay_item_id"] for row in shard_rows], ["item-1", "item-4"])
+
 
 if __name__ == "__main__":
     unittest.main()

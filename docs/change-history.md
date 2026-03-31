@@ -401,3 +401,17 @@
   - `wait_ready(driver, sleep_sec=...)` を使って、Mercari だけ既定 `0.4秒` に短縮
 - 残課題:
   - shops 系 URL で false negative が増えないか本番 run で確認する
+
+### Mercari を shard 実行できるようにして同一サイト並列の土台を追加
+- 事象:
+  - `worker=3` と `ready_sleep=0.4` まで詰めても、Mercari 1 run の ETA がなお `30時間` 級で、全サイト 1日2回の要件を満たせなかった
+- 原因:
+  - `mercari` は 1 run = 全 item が前提で、複数 run に水平分割できず、同一サイトの処理量を複数 run に逃がせなかった
+- 対応:
+  - `apps/runner/main.py` に `--shard-index` / `--shard-total` を追加
+  - `scrapers/common/execution_guard.py` で shard ごとに別 lock を取れるよう変更
+  - `scrapers/sites/mercari/adapter.py` で shard index/total に応じて対象 item を分割するよう変更
+  - `apps/dashboard_api/main.py` で同一サイトの複数 running run を合算表示できるよう変更
+- 残課題:
+  - orchestrator から shard 起動するか、当面は手動 shard 起動で運用するかを決める
+  - dashboard UI に `active_run_count` を出すか判断する

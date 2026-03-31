@@ -18,6 +18,8 @@ STATUS_MAP = {
 MERCARI_REBUILD_EVERY = int(os.getenv("MERCARI_REBUILD_EVERY", "30"))
 MERCARI_UPDATE_BATCH_SIZE = int(os.getenv("MERCARI_UPDATE_BATCH_SIZE", "50"))
 MERCARI_BROWSER_WORKERS = int(os.getenv("MERCARI_BROWSER_WORKERS", "3"))
+MERCARI_SHARD_INDEX = int(os.getenv("SCRAPER_SHARD_INDEX", "0"))
+MERCARI_SHARD_TOTAL = int(os.getenv("SCRAPER_SHARD_TOTAL", "1"))
 
 
 def _split_items(items: list[dict], worker_count: int) -> list[list[dict]]:
@@ -27,6 +29,12 @@ def _split_items(items: list[dict], worker_count: int) -> list[list[dict]]:
     for index, row in enumerate(items):
         chunks[index % worker_count].append(row)
     return [chunk for chunk in chunks if chunk]
+
+
+def _select_shard_items(items: list[dict], shard_index: int, shard_total: int) -> list[dict]:
+    if shard_total <= 1:
+        return items
+    return [row for idx, row in enumerate(items) if idx % shard_total == shard_index]
 
 
 def _process_chunk(run_id: str, rows: list[dict], rebuild_every: int, update_batch_size: int) -> int:
@@ -110,9 +118,13 @@ def _process_chunk(run_id: str, rows: list[dict], rebuild_every: int, update_bat
 def run_pipeline(run_id: str) -> dict:
     fetch_step = start_step(run_id, 'fetch_items')
     try:
-        items = fetch_active_items_by_domain(['mercari.com', 'jp.mercari.com'], page_size=50)
+        all_items = fetch_active_items_by_domain(['mercari.com', 'jp.mercari.com'], page_size=50)
+        items = _select_shard_items(all_items, MERCARI_SHARD_INDEX, max(MERCARI_SHARD_TOTAL, 1))
         if not items:
-            finish_step(fetch_step, 'success', 'mercari no target items')
+            if max(MERCARI_SHARD_TOTAL, 1) > 1:
+                finish_step(fetch_step, 'success', f'mercari shard {MERCARI_SHARD_INDEX + 1}/{MERCARI_SHARD_TOTAL} no target items')
+            else:
+                finish_step(fetch_step, 'success', 'mercari no target items')
             return {'status': 'success', 'message': 'mercari pipeline completed: 0 items'}
         finish_step(fetch_step, 'success', f'fetched {len(items)} items')
     except Exception as exc:
@@ -123,7 +135,16 @@ def run_pipeline(run_id: str) -> dict:
     update_batch_size = max(MERCARI_UPDATE_BATCH_SIZE, 1)
     worker_count = max(1, min(MERCARI_BROWSER_WORKERS, len(items)))
     chunks = _split_items(items, worker_count)
-    json_log('info', 'mercari worker plan', run_id=run_id, workers=worker_count, chunks=len(chunks), items=len(items))
+    json_log(
+        'info',
+        'mercari worker plan',
+        run_id=run_id,
+        workers=worker_count,
+        chunks=len(chunks),
+        items=len(items),
+        shard_index=MERCARI_SHARD_INDEX,
+        shard_total=max(MERCARI_SHARD_TOTAL, 1),
+    )
 
     try:
         processed = 0

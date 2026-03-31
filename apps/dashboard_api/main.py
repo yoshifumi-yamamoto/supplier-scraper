@@ -322,6 +322,63 @@ def _summarize_run_steps(run: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _merge_step_summaries(step_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    valid = [s for s in step_summaries if s]
+    if not valid:
+        return {
+            "total_items": None,
+            "processed_items": 0,
+            "remaining_items": None,
+            "success_items": 0,
+            "failed_items": 0,
+            "running_items": 0,
+            "progress_percent": None,
+            "last_step_at": None,
+            "avg_step_sec": None,
+            "eta_at": None,
+        }
+
+    total_items = sum((s.get("total_items") or 0) for s in valid)
+    total_items = total_items or None
+    processed_items = sum(int(s.get("processed_items") or 0) for s in valid)
+    success_items = sum(int(s.get("success_items") or 0) for s in valid)
+    failed_items = sum(int(s.get("failed_items") or 0) for s in valid)
+    running_items = sum(int(s.get("running_items") or 0) for s in valid)
+    remaining_items = max((total_items or 0) - processed_items, 0) if total_items is not None else None
+    progress_percent = round((processed_items / total_items) * 100) if total_items else None
+
+    last_step_dt: datetime | None = None
+    avg_step_values: list[float] = []
+    eta_dt: datetime | None = None
+    for summary in valid:
+        last_raw = summary.get("last_step_at")
+        last_parsed = _parse_ts(last_raw)
+        if last_parsed and (last_step_dt is None or last_parsed > last_step_dt):
+            last_step_dt = last_parsed
+        avg_raw = summary.get("avg_step_sec")
+        if isinstance(avg_raw, (int, float)):
+            avg_step_values.append(float(avg_raw))
+        eta_raw = summary.get("eta_at")
+        eta_parsed = _parse_ts(eta_raw)
+        if eta_parsed and (eta_dt is None or eta_parsed > eta_dt):
+            eta_dt = eta_parsed
+
+    avg_step_sec = round(sum(avg_step_values) / len(avg_step_values), 1) if avg_step_values else None
+
+    return {
+        "total_items": total_items,
+        "processed_items": processed_items,
+        "remaining_items": remaining_items,
+        "success_items": success_items,
+        "failed_items": failed_items,
+        "running_items": running_items,
+        "progress_percent": progress_percent,
+        "last_step_at": last_step_dt.isoformat() if last_step_dt else None,
+        "avg_step_sec": avg_step_sec,
+        "eta_at": eta_dt.isoformat() if eta_dt else None,
+    }
+
+
 def _site_process_running(site: str) -> bool:
     site = (site or "").strip()
     if not site:
@@ -1557,6 +1614,7 @@ def mcp_summary() -> dict:
             failed_24h = 0
             running = 0
             latest_by_site: dict[str, dict[str, Any]] = {}
+            running_rows_by_site: dict[str, list[dict[str, Any]]] = {}
             error_counter: Counter[str] = Counter()
             error_last_seen: dict[str, str] = {}
 
@@ -1577,6 +1635,7 @@ def mcp_summary() -> dict:
 
                 if status == "running":
                     running += 1
+                    running_rows_by_site.setdefault(site, []).append(row)
 
                 prev = latest_by_site.get(site)
                 if not prev or ((started_at or "") > (prev.get("started_at") or "")):
@@ -1600,25 +1659,44 @@ def mcp_summary() -> dict:
                         error_last_seen[key] = seen_at
 
             for site, row in list(latest_by_site.items()):
-                started_dt = _parse_ts(row.get("started_at"))
+                site_running_rows = running_rows_by_site.get(site, [])
+                active_rows = site_running_rows if site_running_rows else [row]
+                primary_row = max(active_rows, key=lambda x: x.get("started_at") or "")
+                started_dt = _parse_ts(primary_row.get("started_at"))
                 finished_dt = _parse_ts(row.get("finished_at"))
                 current_dt = started_dt or finished_dt
                 elapsed_minutes = None
+                current_status = "running" if site_running_rows else row.get("status")
                 if current_dt:
-                    end_dt = now_utc if row.get("status") == "running" else (finished_dt or now_utc)
+                    end_dt = now_utc if current_status == "running" else (finished_dt or now_utc)
                     elapsed_minutes = max(int((end_dt - current_dt).total_seconds() // 60), 0)
                 interval_min = _site_interval_minutes(site)
                 next_run_at = None
-                if row.get("status") == "running":
+                if current_status == "running":
                     next_run_at = None
                 elif started_dt:
                     eligible_at = started_dt + timedelta(minutes=interval_min)
                     next_run_at = _ceil_to_tick(eligible_at, MCP_ORCHESTRATOR_TICK_MIN).isoformat()
 
                 process_alive = _site_process_running(site)
-                step_summary = _summarize_run_steps(row)
-                display_status, status_reason = _derive_dashboard_status(row, step_summary, process_alive, now_utc)
+                if site_running_rows:
+                    step_summary = _merge_step_summaries([_summarize_run_steps(run_row) for run_row in site_running_rows])
+                    dashboard_row = {
+                        **row,
+                        "id": primary_row.get("id"),
+                        "trigger_type": primary_row.get("trigger_type"),
+                        "started_at": primary_row.get("started_at"),
+                        "status": "running",
+                    }
+                else:
+                    step_summary = _summarize_run_steps(row)
+                    dashboard_row = row
+                display_status, status_reason = _derive_dashboard_status(dashboard_row, step_summary, process_alive, now_utc)
 
+                row["id"] = dashboard_row.get("id")
+                row["status"] = dashboard_row.get("status")
+                row["trigger_type"] = dashboard_row.get("trigger_type")
+                row["started_at"] = dashboard_row.get("started_at")
                 row["elapsed_minutes"] = elapsed_minutes
                 row["next_run_at"] = next_run_at
                 row["interval_minutes"] = interval_min
@@ -1626,6 +1704,7 @@ def mcp_summary() -> dict:
                 row["process_alive"] = process_alive
                 row["display_status"] = display_status
                 row["display_status_reason"] = status_reason
+                row["active_run_count"] = len(site_running_rows) if site_running_rows else 1
 
             proc = _process_counts()
             vm = psutil.virtual_memory()

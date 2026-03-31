@@ -16,10 +16,11 @@ class LockBusyError(RuntimeError):
     pass
 
 
-def acquire_run_lock(site: str) -> RunLock:
+def acquire_run_lock(site: str, scope: str | None = None) -> RunLock:
     lock_dir = os.getenv("RUN_LOCK_DIR", "/tmp")
     os.makedirs(lock_dir, exist_ok=True)
-    path = os.path.join(lock_dir, f"supplier-scraper-{site}.lock")
+    lock_name = scope or site
+    path = os.path.join(lock_dir, f"supplier-scraper-{lock_name}.lock")
     fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)

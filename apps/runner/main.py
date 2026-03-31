@@ -24,22 +24,49 @@ def main() -> int:
         choices=list_sites(),
         help="target site",
     )
+    parser.add_argument(
+        "--shard-index",
+        type=int,
+        default=0,
+        help="0-based shard index for site-internal parallel runs",
+    )
+    parser.add_argument(
+        "--shard-total",
+        type=int,
+        default=1,
+        help="total shard count for site-internal parallel runs",
+    )
     args = parser.parse_args()
+    shard_total = max(int(args.shard_total or 1), 1)
+    shard_index = max(int(args.shard_index or 0), 0)
+    if shard_index >= shard_total:
+        raise SystemExit(f"invalid shard configuration: index={shard_index} total={shard_total}")
+
+    shard_suffix = None
+    trigger_type = "manual"
+    if shard_total > 1:
+        shard_suffix = f"{args.site}-shard-{shard_index + 1}-of-{shard_total}"
+        trigger_type = f"manual_shard_{shard_index + 1}_of_{shard_total}"
+        os.environ["SCRAPER_SHARD_INDEX"] = str(shard_index)
+        os.environ["SCRAPER_SHARD_TOTAL"] = str(shard_total)
+    else:
+        os.environ.pop("SCRAPER_SHARD_INDEX", None)
+        os.environ.pop("SCRAPER_SHARD_TOTAL", None)
 
     lock = None
     run_id = os.getenv("RUN_ID") or str(uuid.uuid4())
     try:
-        lock = acquire_run_lock(args.site)
+        lock = acquire_run_lock(args.site, scope=shard_suffix)
     except LockBusyError as exc:
         msg = str(exc)
-        json_log("warning", "skip run: already running", site=args.site, error=msg)
+        json_log("warning", "skip run: already running", site=args.site, shard_index=shard_index, shard_total=shard_total, error=msg)
         return 0
 
-    json_log("info", "run started", run_id=run_id, site=args.site)
+    json_log("info", "run started", run_id=run_id, site=args.site, shard_index=shard_index, shard_total=shard_total)
     try:
-        create_run(run_id=run_id, site=args.site, trigger_type="manual")
+        create_run(run_id=run_id, site=args.site, trigger_type=trigger_type)
     except Exception as exc:  # noqa: BLE001
-        json_log("warning", "create_run failed, continue run", run_id=run_id, site=args.site, error=str(exc))
+        json_log("warning", "create_run failed, continue run", run_id=run_id, site=args.site, shard_index=shard_index, shard_total=shard_total, error=str(exc))
 
     try:
         cleanup_site_processes(args.site)
@@ -58,7 +85,7 @@ def main() -> int:
         try:
             finish_run(run_id=run_id, status=status, error_summary=None if status == "success" else result_message)
         except Exception as exc:  # noqa: BLE001
-            json_log("warning", "finish_run failed", run_id=run_id, site=args.site, error=str(exc))
+            json_log("warning", "finish_run failed", run_id=run_id, site=args.site, shard_index=shard_index, shard_total=shard_total, error=str(exc))
         if status != "success":
             error_text = result_message or "pipeline returned error status"
             if should_notify_failure(error_text):
@@ -69,6 +96,8 @@ def main() -> int:
                     "suppressed transient failure notification",
                     run_id=run_id,
                     site=args.site,
+                    shard_index=shard_index,
+                    shard_total=shard_total,
                     error=error_text,
                     error_type=classify_error(error_text),
                 )
@@ -76,7 +105,7 @@ def main() -> int:
         return 0 if status == "success" else 1
     except Exception as exc:  # noqa: BLE001
         msg = describe_exception(exc)
-        json_log("error", "run failed", run_id=run_id, site=args.site, error=msg)
+        json_log("error", "run failed", run_id=run_id, site=args.site, shard_index=shard_index, shard_total=shard_total, error=msg)
         if should_notify_failure(msg):
             notify_chatwork(build_failure_message(site=args.site, run_id=run_id, error=msg))
         else:
@@ -85,13 +114,15 @@ def main() -> int:
                 "suppressed transient failure notification",
                 run_id=run_id,
                 site=args.site,
+                shard_index=shard_index,
+                shard_total=shard_total,
                 error=msg,
                 error_type=classify_error(msg),
             )
         try:
             finish_run(run_id=run_id, status="failed", error_summary=msg)
         except Exception as finish_exc:  # noqa: BLE001
-            json_log("warning", "finish_run failed", run_id=run_id, site=args.site, error=str(finish_exc))
+            json_log("warning", "finish_run failed", run_id=run_id, site=args.site, shard_index=shard_index, shard_total=shard_total, error=str(finish_exc))
         cleanup_site_processes(args.site)
         return 1
     finally:
