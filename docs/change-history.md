@@ -335,3 +335,19 @@
 - 残課題:
   - 本番の `items/min` と `eta` が改善するかを確認する
   - まだ遅い場合は `update_item_stock()` の batch 化を検討する
+
+### commit / push の手順をスクリプト化
+- 事象:
+  - `git commit` 後に `Everything up-to-date` と見えるズレが繰り返し発生した
+- 原因:
+  - `git commit` と `git push` を並列で流しており、`push` が先に走ることがあった
+  - 加えて `.git/index.lock` が頻発し、commit 失敗後に次の操作へ進みやすかった
+- 対応:
+  - `scripts/safe_commit_push.sh` を追加
+  - `docs/deploy.md` に Git 運用ルールと利用例を追記
+- 効果:
+  - `index.lock` がある状態で進まない
+  - commit / push を直列化できる
+  - push 後に `HEAD == origin/main` まで検証できる
+- 残課題:
+  - 今後の commit / push はこのスクリプトに寄せる

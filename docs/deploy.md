@@ -44,6 +44,30 @@
 - migration が必要な変更は、workflow を分けるか手順を明示する
 - server に直接コピーした緊急修正がある場合は、必ず同内容を repo に戻してから次回 deploy する
 
+## Git 運用
+- `git commit` と `git push` を並列で流さない
+- `.git/index.lock` がある状態で次の git 操作へ進まない
+- commit / push は `scripts/safe_commit_push.sh` を使って直列で行う
+
+例:
+```bash
+./scripts/safe_commit_push.sh \
+  "Add dashboard capacity summary" \
+  apps/dashboard_api/main.py \
+  apps/dashboard-web/lib/api.ts \
+  apps/dashboard-web/app/page.tsx \
+  docs/change-history.md
+```
+
+このスクリプトは次を行う:
+- `index.lock` の事前検知
+- 対象 path のみ `git add`
+- staged diff 表示
+- `git commit`
+- `HEAD` と `origin/main` の比較
+- `git push origin main`
+- push 後の `HEAD == origin/main` 検証
+
 ## 今回この形にした理由
 - 現在の障害は、修正自体より「修正が KAGOYA に入っていない」ことが原因だった
 - まずは未デプロイ事故を構造で潰す方が優先
