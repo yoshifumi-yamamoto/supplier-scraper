@@ -212,3 +212,19 @@
 - 残課題:
   - `rakuma` から順に per-item step へ移行する
   - `dashboard_api` の site 別分岐を、adapter 側 step 統一後に削減する
+
+### `rakuma` の step 記録を canonical 形式へ統一
+- 事象:
+  - `rakuma` は `running` でも進捗メータを共通計算できず、ダッシュボード上で件数進捗が出しづらかった
+- 原因:
+  - adapter が `fetch_items` の message に `fetched={N}` を使い、item 単位の `check:<ebay_item_id>` ではなく bulk の `check_stock` を積んでいた
+- 対応:
+  - `scrapers/sites/rakuma/adapter.py` を修正
+  - `fetch_items` の success message を `fetched {N} items` に統一
+  - item ごとに `check:<ebay_item_id>` step を積むよう変更
+  - check 失敗時も item 単位で `不明` 更新と step 完了を残すよう変更
+- 検証:
+  - `python3 -m unittest tests.test_rakuma_step_progress tests.test_site_domain_aliases`
+  - `python3 -m py_compile scrapers/sites/rakuma/adapter.py`
+- 残課題:
+  - 同じ形式へ `hardoff` / `kitamura` / `yodobashi` を順に揃える
