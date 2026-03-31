@@ -79,12 +79,12 @@ class SiteAliasDomainTests(unittest.TestCase):
         fetch_mock.assert_called_once_with(["fril.jp", "item.fril.jp"])
         self.assertEqual(result["status"], "success")
 
-    @patch("scrapers.sites.yafuoku.adapter.finish_step")
-    @patch("scrapers.sites.yafuoku.adapter.start_step", return_value="step-1")
-    @patch("scrapers.sites.yafuoku.adapter.fetch_active_items_by_domain", return_value=[])
-    def test_yafuoku_fetches_alias_domains(self, fetch_mock, _start_mock, _finish_mock) -> None:
+    @patch("scrapers.sites.yafuoku.adapter.run_sequential_stock_pipeline", return_value={"status": "success"})
+    def test_yafuoku_fetches_alias_domains(self, pipeline_mock) -> None:
         result = yafuoku_adapter.run_pipeline("run-1")
-        fetch_mock.assert_called_once_with(["auctions.yahoo.co.jp", "page.auctions.yahoo.co.jp"], page_size=25)
+        kwargs = pipeline_mock.call_args.kwargs
+        self.assertEqual(kwargs["domains"], ["auctions.yahoo.co.jp", "page.auctions.yahoo.co.jp"])
+        self.assertEqual(kwargs["fetch_page_size"], 25)
         self.assertEqual(result["status"], "success")
 
 

@@ -416,3 +416,17 @@
   - orchestrator から shard 起動するか、当面は手動 shard 起動で運用するかを決める
   - dashboard UI に `active_run_count` を出すか判断する
   - 現状は `2 shard` で観測し、件数増加に備えて `3 shard` を次段候補として plan に保持する
+
+### Yahoo系サイトの stock pipeline を共通化しつつ batch 更新と待機短縮を導入
+- 事象:
+  - `yafuoku` と `yahoofleama` はどちらも 1 item ごとの即時 DB 更新と保守的な待機を使っており、全サイト 1日2回の要件に対して throughput が不足していた
+- 原因:
+  - adapter の構造がほぼ同じなのに共通化されておらず、Mercari で効いた最適化を横展開しづらかった
+- 対応:
+  - `scrapers/common/selenium_stock_pipeline.py` を追加し、`fetch -> browser loop -> batch update -> rebuild_every` を共通 helper 化
+  - `yafuoku` と `yahoofleama` の adapter を helper 利用へ置き換え
+  - 両 checker に site 別 `READY_SLEEP_SECONDS` / `BUY_WAIT_SECONDS` を追加して既定待機を短縮
+  - `tests/test_yahoo_stock_pipeline.py` を追加
+- 残課題:
+  - 本番で `items_per_min` がどこまで改善するか確認する
+  - 効果が不足する場合は `yafuoku` を shard 候補に上げる
