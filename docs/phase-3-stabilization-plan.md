@@ -172,6 +172,139 @@
 - `display_status` と進捗メータが同じ run / step 群を基準に計算される
 - 進捗表示のための site 別分岐を `dashboard_api` から減らせる
 
+## 7.2 並列余力判断用 Capacity 表示の設計（2026-03-31）
+
+### 目的
+- `メモリ使用率` や `Swap使用率` だけでは、並列数を安全に上げられるか判断できない
+- ダッシュボード上で「今どれくらい余力があり、何がボトルネックか」を見えるようにする
+- 将来の `resource guard` と同じ指標を先に可視化し、制御前に観測できる状態を作る
+
+### 画面に出す指標
+
+#### システム余力
+- `CPU使用率`
+- `CPU load average (1m / 5m / 15m)`
+- `メモリ使用率`
+- `Swap使用率`
+- `ディスク空き容量`
+
+#### 実行中リソース
+- `実行中サイト数`
+- `実行中 run 数`
+- `実行中 browser 数`
+- `実行中 runner process 数`
+- `停止疑い run 数`
+
+#### 実行品質
+- `直近1時間の成功 run 数`
+- `直近1時間の失敗 run 数`
+- `直近1時間の retry 数`
+- `直近1時間の db_timeout 件数`
+- `直近1時間の stale_running 件数`
+- `直近24時間の成功率`
+
+#### Throughput
+- `site ごとの平均 run 時間`
+- `site ごとの item 処理速度 (items/min)`
+- `running 中 site の processed / total / remaining / eta`
+
+### API 設計
+- `GET /api/capacity`
+
+返却案:
+```json
+{
+  "snapshot_at": "2026-03-31T12:00:00+09:00",
+  "system": {
+    "cpu_percent": 21.4,
+    "load_average": [1.2, 1.0, 0.9],
+    "memory_percent": 18.0,
+    "swap_percent": 11.0,
+    "disk_free_gb": 142.3
+  },
+  "runtime": {
+    "running_sites": 3,
+    "running_runs": 3,
+    "stalled_runs": 1,
+    "chrome_processes": 9,
+    "runner_processes": 3
+  },
+  "quality": {
+    "success_runs_1h": 5,
+    "failed_runs_1h": 1,
+    "retry_runs_1h": 1,
+    "db_timeout_1h": 0,
+    "stale_running_1h": 1,
+    "run_success_rate_24h": 0.87
+  },
+  "throughput": {
+    "items_per_minute_running": 42.1,
+    "avg_run_minutes_by_site": {
+      "mercari": 181,
+      "yafuoku": 132
+    }
+  },
+  "capacity_hint": {
+    "parallel_level": "caution",
+    "reasons": [
+      "stalled_runs=1",
+      "chrome_processes=9"
+    ]
+  }
+}
+```
+
+### 計算元
+- `system`
+  - `psutil.cpu_percent()`
+  - `os.getloadavg()`
+  - `psutil.virtual_memory()`
+  - `psutil.swap_memory()`
+  - `psutil.disk_usage("/")`
+- `runtime`
+  - `scrape_runs` の latest status
+  - 既存の `_site_process_running()` と `_process_counts()`
+  - `display_status == stalled`
+- `quality`
+  - `scrape_runs`
+  - `error_summary`
+  - `error_type`
+  - validator summary
+- `throughput`
+  - `scrape_run_steps`
+  - `processed_items / elapsed_minutes`
+
+### UI 設計
+- Overview の KPI の下に `Capacity` セクションを追加
+- 色は `ok / caution / ng` の 3 段階
+- まず数値を出し、推奨メッセージは補助表示に留める
+- `メモリに余裕あり` のような曖昧文言ではなく、必ず理由も出す
+  - 例: `並列増加は注意: stale run 1件 / browser 9件`
+
+### 並列判断の初期ルール
+- `ok`
+  - `memory_percent < 70`
+  - `swap_percent < 20`
+  - `stalled_runs = 0`
+  - `db_timeout_1h = 0`
+  - `chrome_processes <= 8`
+- `caution`
+  - 上記の一部を超過しているが、重大障害ではない
+- `ng`
+  - `stalled_runs > 0`
+  - または `db_timeout_1h > 0`
+  - または `swap_percent >= 40`
+
+### 段階的導入
+1. `dashboard_api` に `GET /api/capacity` を追加
+2. `dashboard-web` に `Capacity` セクションを追加
+3. 数日観測してから `resource guard` の実制御へ接続する
+
+### 完了条件
+- ダッシュボードだけで「今 parallel を上げていいか」を判断できる
+- `memory/swap` 以外に `db_timeout` と `stalled_runs` を見て判断できる
+- 後続の `resource guard` が同じ指標を使える
+
 ## 8. 毎日の確認項目
 - `validator_agent.log` に同一原因の連続通知が出ていないか
 - `scrape_runs` に `57014` / `502` / `already_running` がどう出ているか

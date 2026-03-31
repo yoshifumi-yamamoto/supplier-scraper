@@ -276,3 +276,18 @@
   - `python3 -m py_compile scrapers/sites/yodobashi/adapter.py`
 - 残課題:
   - 今回の棚卸し対象 `rakuma / hardoff / kitamura / yodobashi` は adapter 形式の統一が完了
+
+### 並列余力判断用 Capacity 表示の設計を追加
+- 事象:
+  - ダッシュボードに `メモリ使用率` と `Swap使用率` は出ているが、並列数を安全に上げられるかの判断材料としては不足していた
+- 原因:
+  - 現状の画面は `system memory` と `run status` を別々に見せており、`db_timeout` / `stalled_runs` / browser 数 / throughput を同じ文脈で見られなかった
+- 対応:
+  - `docs/phase-3-stabilization-plan.md` に `Capacity` セクションの設計を追加
+  - `GET /api/capacity` の返却案、計算元、UI 要件、初期しきい値を定義
+- 狙い:
+  - 先に観測指標を固め、その後 `resource guard` の制御指標と揃える
+- 残課題:
+  - `dashboard_api` 実装
+  - `dashboard-web` の `Capacity` セクション追加
+  - 数日観測したうえで並列数増加の判断ルールを見直す
