@@ -18,6 +18,12 @@ def _env_int(name: str, default: int) -> int:
     return max(int(os.getenv(name, str(default))), 1)
 
 
+def _select_shard_items(items: list[dict], shard_index: int, shard_total: int) -> list[dict]:
+    if shard_total <= 1:
+        return items
+    return [row for idx, row in enumerate(items) if idx % shard_total == shard_index]
+
+
 def run_sequential_stock_pipeline(
     *,
     run_id: str,
@@ -31,20 +37,36 @@ def run_sequential_stock_pipeline(
     batch_size_env: str,
     batch_size_default: int,
 ) -> dict:
+    shard_total = max(int(os.getenv("SCRAPER_SHARD_TOTAL", "1")), 1)
+    shard_index = max(int(os.getenv("SCRAPER_SHARD_INDEX", "0")), 0)
     fetch_step = start_step(run_id, "fetch_items")
     fetch_kwargs = dict(fetch_kwargs or {})
     if fetch_page_size is not None:
         fetch_kwargs["page_size"] = fetch_page_size
 
     try:
-        items = fetch_active_items_by_domain(domains, **fetch_kwargs)
+        all_items = fetch_active_items_by_domain(domains, **fetch_kwargs)
+        items = _select_shard_items(all_items, shard_index, shard_total)
         if not items:
-            finish_step(fetch_step, "success", f"{site} no target items")
+            if shard_total > 1:
+                finish_step(fetch_step, "success", f"{site} shard {shard_index + 1}/{shard_total} no target items")
+            else:
+                finish_step(fetch_step, "success", f"{site} no target items")
             return {"status": "success", "message": f"{site} pipeline completed: 0 items"}
         finish_step(fetch_step, "success", f"fetched {len(items)} items")
     except Exception as exc:
         finish_step(fetch_step, "failed", f"fetch failed: {exc}")
         raise
+
+    if shard_total > 1:
+        json_log(
+            "info",
+            f"{site} shard plan",
+            run_id=run_id,
+            shard_index=shard_index,
+            shard_total=shard_total,
+            items=len(items),
+        )
 
     driver = build_chrome(headless=True)
     processed = 0

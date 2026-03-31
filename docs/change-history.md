@@ -443,3 +443,16 @@
   - 回帰用に `tests/test_dashboard_api_run_steps.py` を追加
 - 残課題:
   - KAGOYA 反映後に `/api/mcp/summary` の `processed_items` が `999` を超えて追随することを確認する
+
+### Yahoo 系共通 stock pipeline に shard 対応を追加
+
+- 事象:
+  - `yafuoku` は最適化後でも約 `12.7 items/min` で、約 `10.5時間` 級の完了見込みだった
+  - 全サイト 1 日 2 回の要件を考えると、余裕が薄い
+- 対応:
+  - `scrapers/common/selenium_stock_pipeline.py` に `SCRAPER_SHARD_INDEX` / `SCRAPER_SHARD_TOTAL` ベースの shard 分割を追加
+  - `apps/runner/main.py --shard-index/--shard-total` で Yahoo 系もそのまま分割実行できるようにした
+  - `_select_shard_items()` の単体テストを追加
+- 方針:
+  - まず `yafuoku` を `2 shard` で計測
+  - まだ不足なら `mercari` と同様に shard 数を段階的に上げる
