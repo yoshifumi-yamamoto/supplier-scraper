@@ -65,7 +65,8 @@ class MercariAdapterTests(unittest.TestCase):
     @patch("scrapers.sites.mercari.adapter.start_step", return_value="step-1")
     @patch("scrapers.sites.mercari.adapter.fetch_active_items_by_domain", return_value=[])
     def test_mercari_pipeline_fetches_both_domains(self, fetch_mock, start_step_mock, finish_step_mock) -> None:
-        result = mercari_adapter.run_pipeline("run-1")
+        with patch.object(mercari_adapter, "MERCARI_BROWSER_WORKERS", 1):
+            result = mercari_adapter.run_pipeline("run-1")
 
         fetch_mock.assert_called_once_with(["mercari.com", "jp.mercari.com"], page_size=50)
         self.assertEqual(result["status"], "success")
@@ -103,7 +104,7 @@ class MercariAdapterTests(unittest.TestCase):
         ]
         start_step_mock.side_effect = ["fetch-step", "check-step-1", "check-step-2"]
 
-        with patch.object(mercari_adapter, "MERCARI_UPDATE_BATCH_SIZE", 2):
+        with patch.object(mercari_adapter, "MERCARI_BROWSER_WORKERS", 1), patch.object(mercari_adapter, "MERCARI_UPDATE_BATCH_SIZE", 2):
             result = mercari_adapter.run_pipeline("run-1")
 
         self.assertEqual(result["status"], "success")
@@ -112,6 +113,14 @@ class MercariAdapterTests(unittest.TestCase):
         self.assertEqual(len(sent_updates), 2)
         self.assertEqual(sent_updates[0]["ebay_item_id"], "item-1")
         self.assertEqual(sent_updates[1]["ebay_item_id"], "item-2")
+
+    def test_split_items_balances_rows(self) -> None:
+        rows = [{"ebay_item_id": f"item-{idx}"} for idx in range(7)]
+
+        chunks = mercari_adapter._split_items(rows, 3)
+
+        self.assertEqual(len(chunks), 3)
+        self.assertEqual([len(chunk) for chunk in chunks], [3, 2, 2])
 
 
 if __name__ == "__main__":

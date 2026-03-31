@@ -377,3 +377,16 @@
 - 残課題:
   - 本番 run の `items/min` と ETA がどこまで改善したかを測定する
   - 必要なら batch サイズと worker 数を再調整する
+
+### Mercari を site 内並列化して browser 直列処理を緩和
+- 事象:
+  - batch 更新導入後も `mercari` の `avg_step_sec` は約 `4.5秒` で、ETA がなお `50時間` 超だった
+- 原因:
+  - `mercari` は 1 run 内で 1 browser が全 item を直列処理しており、DB 往復を減らしても Selenium 側の待ち時間が支配的だった
+- 対応:
+  - `scrapers/sites/mercari/adapter.py` に worker 分割を追加し、既定 `3 browser workers` で item 群を分散処理するよう変更
+  - `MERCARI_BROWSER_WORKERS` で worker 数を調整できるようにした
+  - `tests/test_mercari_domain_fetch.py` に chunk 分割の回帰テストを追加
+- 残課題:
+  - 本番の `chrome_processes` と `items/min` を見て worker 数 `3` が妥当か確認する
+  - server capacity が許すなら `4` 以上への引き上げを検討する
