@@ -125,26 +125,73 @@
 - 未完了項目は次フェーズへ移す条件を書く
 - 本番運用チェックリストを更新する
 
-## 7. 毎日の確認項目
+## 7.1 進捗メータ統一の棚卸し（2026-03-31）
+
+### 目的
+- ダッシュボード上の `processed / total / remaining / eta` を全サイトで同じ計算で出せるようにする
+- サイトごとに step 名や message 形式が違うため、表示できるサイトとできないサイトが混在している状態を解消する
+
+### 現在の統一済みサイト
+- `mercari`
+- `yafuoku`
+- `yahoofleama`
+- `secondstreet`
+- `surugaya`
+
+共通パターン:
+- `fetch_items` step を持つ
+- `check:<ebay_item_id>` の per-item step を積む
+- `fetch_items` の message から総件数を取りやすい
+
+### 未統一サイト
+- `rakuma`
+- `hardoff`
+- `kitamura`
+- `yodobashi`
+
+現状の差分:
+- per-item の `check:<ebay_item_id>` ではなく、bulk の `check_stock` を使っている
+- `fetch_items` の message が `fetched={N}` 形式で、他サイトの `fetched N items` と揃っていない
+- そのため、ダッシュボード側で `processed / total / remaining / eta` を同一ロジックで出しづらい
+
+### 統一方針
+- 全サイトで `fetch_items` を使用する
+- `fetch_items` の message は `fetched {N} items` に揃える
+- 各 item 処理は `check:<ebay_item_id>` に揃える
+- item 単位の失敗は step 単位で `failed` に残す
+- `check_stock` のような bulk step は段階的に廃止する
+
+### 優先順
+1. `rakuma`
+2. `hardoff`
+3. `kitamura`
+4. `yodobashi`
+
+### 完了条件
+- 全サイトで `processed / total / remaining / eta` がダッシュボードに表示される
+- `display_status` と進捗メータが同じ run / step 群を基準に計算される
+- 進捗表示のための site 別分岐を `dashboard_api` から減らせる
+
+## 8. 毎日の確認項目
 - `validator_agent.log` に同一原因の連続通知が出ていないか
 - `scrape_runs` に `57014` / `502` / `already_running` がどう出ているか
 - retry が増やした run と改善した run の比率
 - 主要サイトの最新成功時刻
 - 新しい失敗パターンが backlog に反映されているか
 
-## 8. このフェーズでやらないこと
+## 9. このフェーズでやらないこと
 - 大規模な UI 再設計
 - 新サイト追加
 - 重い機能開発
 - Queue 基盤の全面導入
 
-## 9. 終了時のアウトプット
+## 10. 終了時のアウトプット
 - P0/P1 の状態が反映された backlog
 - 本番反映済みの DB timeout 対策
 - retry / notification / resource guard の最小安定版
 - 次フェーズへ渡す未完了項目一覧
 
-## 10. 実施ログ
+## 11. 実施ログ
 
 ### 2026-03-25 Day 1
 - `scrapers/common/items.py` を KAGOYA 本番へ反映

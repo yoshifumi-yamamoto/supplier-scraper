@@ -195,3 +195,20 @@
   - `orphaned run cleanup` を実装し、process 不在かつ stale な `running` を自動回収する
   - `heartbeat_at` もしくは同等の run heartbeat を導入し、step 更新がない run を早く検出できるようにする
   - `runner` の異常終了時に `finish_run(failed)` が必ず実行されるよう終了ハンドリングを強化する
+
+### 進捗メータがサイトごとに揃っていない件を棚卸し
+- 事象:
+  - ダッシュボードで `processed / total / remaining / eta` が出るサイトと出ないサイトが混在していた
+  - 同じ `running` でも、`mercari` / `yafuoku` / `yahoofleama` は進捗が見える一方、`rakuma` などはメータを共通計算できなかった
+- 原因:
+  - site adapter ごとに `scrape_run_steps` の積み方が統一されていなかった
+  - 統一済みサイトは `fetch_items` + `check:<ebay_item_id>` を使っていたが、未統一サイトは bulk の `check_stock` と `fetched={N}` message を使っていた
+- 確認:
+  - 統一済み: `mercari`, `yafuoku`, `yahoofleama`, `secondstreet`, `surugaya`
+  - 未統一: `rakuma`, `hardoff`, `kitamura`, `yodobashi`
+- 対応:
+  - `docs/phase-3-stabilization-plan.md` に進捗メータ統一の棚卸しと優先順を追加
+  - 統一方針を `fetch_items` / `fetched {N} items` / `check:<ebay_item_id>` に固定
+- 残課題:
+  - `rakuma` から順に per-item step へ移行する
+  - `dashboard_api` の site 別分岐を、adapter 側 step 統一後に削減する
