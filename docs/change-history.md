@@ -175,3 +175,23 @@
   - `bash -n scripts/post_deploy_smoke.sh`
 - 残課題:
   - 本番 deploy 後に `http://127.0.0.1:3000/` の HTML が新しい進捗ラベルを返すことを確認する
+
+### stale run が長時間ぶら下がり、画面と実態が乖離した件
+- 事象:
+  - `mercari` が `2026-03-30 19:08 JST` 開始の run のまま長時間 `running` に残り、実際には step 更新が止まっていた
+  - `secondstreet` / `yafuoku` も DB 上 `running` のまま残り、ダッシュボードが `稼働中` に見えていた
+- 原因:
+  - `scrape_runs.status` が `running` のまま残る経路があり、process 不在や長時間 no step activity を即時に回収できていなかった
+  - dashboard は DB status を信用しすぎており、実プロセス有無と last step activity を十分見ていなかった
+  - validator / dashboard 両方の process 判定が wrapper shell に誤反応する余地があった
+- 対応:
+  - dashboard API に `display_status` を追加し、`process_alive` と `last_step_at` を使って `stalled` を導出
+  - `mercari` / `yafuoku` / `secondstreet` の stale run を手動で `failed` 化し、新しい run を起動
+  - validator / dashboard の process 判定を `python3 apps/runner/main.py --site ...` 本体優先に修正
+- 検証:
+  - KAGOYA 上の `scrape_runs` と `scrape_run_steps` を直接確認
+  - 古い stalled run を閉じた後、新 run が `fetch_items` / `check:*` を開始することを確認
+- 残課題:
+  - `orphaned run cleanup` を実装し、process 不在かつ stale な `running` を自動回収する
+  - `heartbeat_at` もしくは同等の run heartbeat を導入し、step 更新がない run を早く検出できるようにする
+  - `runner` の異常終了時に `finish_run(failed)` が必ず実行されるよう終了ハンドリングを強化する
