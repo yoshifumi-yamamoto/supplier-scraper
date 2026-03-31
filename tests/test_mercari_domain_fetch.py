@@ -73,6 +73,46 @@ class MercariAdapterTests(unittest.TestCase):
         start_step_mock.assert_called_once_with("run-1", "fetch_items")
         finish_step_mock.assert_called_once_with("step-1", "success", "mercari no target items")
 
+    @patch("scrapers.sites.mercari.adapter.update_item_stock_bulk")
+    @patch("scrapers.sites.mercari.adapter.finish_step")
+    @patch("scrapers.sites.mercari.adapter.start_step")
+    @patch("scrapers.sites.mercari.adapter.check_stock_status")
+    @patch("scrapers.sites.mercari.adapter.build_chrome")
+    @patch("scrapers.sites.mercari.adapter.fetch_active_items_by_domain")
+    def test_mercari_batches_item_updates(
+        self,
+        fetch_mock,
+        build_chrome_mock,
+        check_mock,
+        start_step_mock,
+        finish_step_mock,
+        update_bulk_mock,
+    ) -> None:
+        class DummyDriver:
+            def quit(self) -> None:
+                return None
+
+        build_chrome_mock.return_value = DummyDriver()
+        fetch_mock.return_value = [
+            {"ebay_item_id": "item-1", "stocking_url": "https://jp.mercari.com/item-1"},
+            {"ebay_item_id": "item-2", "stocking_url": "https://jp.mercari.com/item-2"},
+        ]
+        check_mock.side_effect = [
+            (_ScrapeStatus.IN_STOCK, "purchase_button"),
+            (_ScrapeStatus.OUT_OF_STOCK, "sold_out_button"),
+        ]
+        start_step_mock.side_effect = ["fetch-step", "check-step-1", "check-step-2"]
+
+        with patch.object(mercari_adapter, "MERCARI_UPDATE_BATCH_SIZE", 2):
+            result = mercari_adapter.run_pipeline("run-1")
+
+        self.assertEqual(result["status"], "success")
+        update_bulk_mock.assert_called_once()
+        sent_updates = update_bulk_mock.call_args.args[0]
+        self.assertEqual(len(sent_updates), 2)
+        self.assertEqual(sent_updates[0]["ebay_item_id"], "item-1")
+        self.assertEqual(sent_updates[1]["ebay_item_id"], "item-2")
+
 
 if __name__ == "__main__":
     unittest.main()

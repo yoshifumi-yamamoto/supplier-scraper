@@ -1,8 +1,9 @@
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import quote
 from datetime import datetime, timezone
-from typing import Any, Iterable, Union
+from typing import Any, Iterable, Optional, Union
 
 import requests
 
@@ -16,6 +17,7 @@ MIN_PAGE_SIZE = int(os.getenv("SUPABASE_MIN_PAGE_SIZE", "10"))
 FETCH_MAX_RETRIES = int(os.getenv("FETCH_MAX_RETRIES", "5"))
 FETCH_BACKOFF_BASE = float(os.getenv("FETCH_BACKOFF_BASE", "2.0"))
 UPDATE_MAX_RETRIES = int(os.getenv("UPDATE_MAX_RETRIES", "4"))
+ITEM_UPDATE_MAX_WORKERS = int(os.getenv("ITEM_UPDATE_MAX_WORKERS", "8"))
 
 
 def _headers() -> dict[str, str]:
@@ -229,3 +231,34 @@ def update_item_stock(ebay_item_id: str, scraped_stock_status: str, *, is_scrape
                 raise
             time.sleep(1.5 * (2 ** attempt))
     raise last_exc  # pragma: no cover
+
+
+def update_item_stock_bulk(
+    updates: list[dict[str, Any]],
+    *,
+    max_workers: Optional[int] = None,
+) -> None:
+    if not updates:
+        return
+
+    worker_count = max(1, max_workers or ITEM_UPDATE_MAX_WORKERS)
+    errors: list[str] = []
+
+    def _apply(update: dict[str, Any]) -> None:
+        update_item_stock(
+            ebay_item_id=str(update["ebay_item_id"]),
+            scraped_stock_status=str(update["scraped_stock_status"]),
+            is_scraped=bool(update.get("is_scraped", True)),
+        )
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = [executor.submit(_apply, update) for update in updates]
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception as exc:  # noqa: BLE001
+                errors.append(str(exc))
+
+    if errors:
+        preview = " | ".join(errors[:3])
+        raise RuntimeError(f"bulk update failed: {preview}")

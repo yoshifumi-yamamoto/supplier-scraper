@@ -351,3 +351,29 @@
   - push 後に `HEAD == origin/main` まで検証できる
 - 残課題:
   - 今後の commit / push はこのスクリプトに寄せる
+
+### 性能判断の基準を「全サイトを1日2回」へ修正
+- 事象:
+  - `mercari` の throughput 改善を個別サイト単位で見てしまい、全体要件に対して十分かの判断が抜けていた
+- 原因:
+  - `1日2回` の対象を個別サイトの完走時間として扱ってしまい、`全サイト合計で 24時間内に 2サイクル` という本来要件を docs に明示していなかった
+- 対応:
+  - `docs/phase-3-stabilization-plan.md` に運用要件を追加
+  - 今後は並列数、throughput、server capacity の判断をこの要件基準で行う
+- 残課題:
+  - 全サイトの現状所要時間を一覧化する
+  - `1日2回` 達成に必要な並列数と server capacity を算出する
+
+### Mercari の item 更新を batch 化して DB 往復を削減
+- 事象:
+  - `mercari` の run が `4万件超` の対象に対して極端に長く、ダッシュボード ETA が `52時間` 級になっていた
+- 原因:
+  - item ごとに `update_item_stock()` を即時実行しており、Selenium 処理に加えて DB 更新往復が `4万回` 近く発生していた
+- 対応:
+  - `scrapers/common/items.py` に `update_item_stock_bulk()` を追加
+  - `scrapers/sites/mercari/adapter.py` で item 更新を batch 化し、既定 `50件` ごとに flush するよう変更
+  - browser 再生成前と run 終了時にも pending update を flush するようにした
+  - `tests/test_mercari_domain_fetch.py` に batch 更新の回帰テストを追加
+- 残課題:
+  - 本番 run の `items/min` と ETA がどこまで改善したかを測定する
+  - 必要なら batch サイズと worker 数を再調整する

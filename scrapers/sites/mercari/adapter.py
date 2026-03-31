@@ -1,7 +1,8 @@
 import os
 
 from scrapers.common.browser import build_chrome
-from scrapers.common.items import fetch_active_items_by_domain, update_item_stock
+from scrapers.common.items import fetch_active_items_by_domain, update_item_stock_bulk
+from scrapers.common.logging_utils import json_log
 from scrapers.common.run_store import finish_step, start_step
 from scrapers.common.models import ScrapeStatus
 from scrapers.sites.mercari.checker import check_stock_status
@@ -14,6 +15,7 @@ STATUS_MAP = {
 }
 
 MERCARI_REBUILD_EVERY = int(os.getenv("MERCARI_REBUILD_EVERY", "30"))
+MERCARI_UPDATE_BATCH_SIZE = int(os.getenv("MERCARI_UPDATE_BATCH_SIZE", "50"))
 
 
 
@@ -32,9 +34,21 @@ def run_pipeline(run_id: str) -> dict:
     driver = build_chrome(headless=True)
     processed = 0
     rebuild_every = max(MERCARI_REBUILD_EVERY, 1)
+    update_batch_size = max(MERCARI_UPDATE_BATCH_SIZE, 1)
+    pending_updates: list[dict[str, object]] = []
+
+    def flush_updates() -> None:
+        nonlocal pending_updates
+        if not pending_updates:
+            return
+        batch = pending_updates
+        pending_updates = []
+        update_item_stock_bulk(batch)
+
     try:
         for row in items:
             if processed > 0 and processed % rebuild_every == 0:
+                flush_updates()
                 try:
                     driver.quit()
                 except Exception:
@@ -47,26 +61,31 @@ def run_pipeline(run_id: str) -> dict:
             step = start_step(run_id, f'check:{ebay_item_id}')
             try:
                 status, message = check_stock_status(driver, row.get('stocking_url') or '')
-                update_item_stock(
-                    ebay_item_id=ebay_item_id,
-                    scraped_stock_status=STATUS_MAP[status],
-                    is_scraped=(status != ScrapeStatus.UNKNOWN),
+                pending_updates.append(
+                    {
+                        'ebay_item_id': ebay_item_id,
+                        'scraped_stock_status': STATUS_MAP[status],
+                        'is_scraped': (status != ScrapeStatus.UNKNOWN),
+                    }
                 )
                 finish_step(step, 'success', message)
                 processed += 1
+                if len(pending_updates) >= update_batch_size:
+                    flush_updates()
             except Exception as exc:
                 err = str(exc)
                 timeout_like = 'Timed out receiving message from renderer' in err or 'timeout:' in err.lower()
                 if timeout_like:
-                    try:
-                        update_item_stock(
-                            ebay_item_id=ebay_item_id,
-                            scraped_stock_status='不明',
-                            is_scraped=False,
-                        )
-                    except Exception:
-                        pass
+                    pending_updates.append(
+                        {
+                            'ebay_item_id': ebay_item_id,
+                            'scraped_stock_status': '不明',
+                            'is_scraped': False,
+                        }
+                    )
                     finish_step(step, 'success', f'renderer timeout skipped: {err[:300]}')
+                    if len(pending_updates) >= update_batch_size:
+                        flush_updates()
                     try:
                         driver.quit()
                     except Exception:
@@ -75,6 +94,13 @@ def run_pipeline(run_id: str) -> dict:
                     continue
                 finish_step(step, 'failed', err)
                 raise
+        flush_updates()
+    except Exception:
+        try:
+            flush_updates()
+        except Exception as flush_exc:  # noqa: BLE001
+            json_log('warning', 'mercari bulk update flush failed', error=str(flush_exc)[:300])
+        raise
     finally:
         try:
             driver.quit()
