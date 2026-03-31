@@ -415,3 +415,4 @@
 - 残課題:
   - orchestrator から shard 起動するか、当面は手動 shard 起動で運用するかを決める
   - dashboard UI に `active_run_count` を出すか判断する
+  - 現状は `2 shard` で観測し、件数増加に備えて `3 shard` を次段候補として plan に保持する
