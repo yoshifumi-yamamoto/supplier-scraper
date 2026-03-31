@@ -241,7 +241,7 @@ def _latest_run_by_site(runs: list[dict[str, Any]]) -> dict[str, dict[str, Any]]
 def _site_process_running(site: str) -> bool:
     try:
         res = subprocess.run(
-            ["ps", "-eo", "cmd"],
+            ["ps", "-eo", "comm=,args="],
             capture_output=True,
             text=True,
             check=False,
@@ -249,8 +249,17 @@ def _site_process_running(site: str) -> bool:
         )
     except Exception:
         return False
-    needle = f"apps/runner/main.py --site {site}"
-    return any(needle in line for line in (res.stdout or "").splitlines())
+    for line in (res.stdout or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if not (line.startswith("python ") or line.startswith("python3 ")):
+            continue
+        if "apps/runner/main.py" not in line:
+            continue
+        if f"--site {site}" in line:
+            return True
+    return False
 
 
 def _compute_last_activity(run: dict[str, Any], run_steps: list[dict[str, Any]]) -> tuple[str | None, int | None]:

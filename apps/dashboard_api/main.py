@@ -325,13 +325,22 @@ def _site_process_running(site: str) -> bool:
     site = (site or "").strip()
     if not site:
         return False
-    needle = f"apps/runner/main.py --site {site}"
     for proc in psutil.process_iter(["cmdline"]):
         try:
-            cmd = " ".join(proc.info.get("cmdline") or [])
+            cmdline = proc.info.get("cmdline") or []
         except Exception:  # noqa: BLE001
             continue
-        if needle in cmd:
+        if not cmdline:
+            continue
+        if "apps/runner/main.py" not in cmdline:
+            continue
+        if "--site" not in cmdline:
+            continue
+        try:
+            idx = cmdline.index("--site")
+        except ValueError:
+            continue
+        if idx + 1 < len(cmdline) and cmdline[idx + 1] == site:
             return True
     return False
 
