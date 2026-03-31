@@ -1,3 +1,4 @@
+import os
 from urllib.parse import urlparse
 
 from selenium.common.exceptions import WebDriverException
@@ -20,6 +21,8 @@ DELETED_XPATH = '//p[contains(text(), "削除されています")]'
 NOT_FOUND_XPATH = '//p[contains(text(), "見つかりませんでした")]'
 SHOPS_OOS_XPATH = '//p[@data-testid="out-of-stock"]'
 LOAD_FAILED_XPATH = '//*[contains(text(), "ページの読み込みに失敗しました")]'
+PURCHASE_WAIT_SECONDS = float(os.getenv("MERCARI_PURCHASE_WAIT_SECONDS", "1.5"))
+REFRESH_RETRY_WAIT_SECONDS = float(os.getenv("MERCARI_REFRESH_RETRY_WAIT_SECONDS", "1.5"))
 
 
 def normalize_mercari_url(raw_url: str | None) -> str | None:
@@ -72,7 +75,7 @@ def _detect_mercari_shops_status(driver) -> tuple[ScrapeStatus, str]:
 
 def _detect_standard_status(driver) -> tuple[ScrapeStatus, str]:
     try:
-        WebDriverWait(driver, 3).until(
+        WebDriverWait(driver, PURCHASE_WAIT_SECONDS).until(
             EC.presence_of_element_located((By.XPATH, PURCHASE_BUTTON_XPATH))
         )
         return ScrapeStatus.IN_STOCK, 'purchase_button'
@@ -91,7 +94,7 @@ def _detect_standard_status(driver) -> tuple[ScrapeStatus, str]:
         driver.refresh()
         wait_ready(driver)
         try:
-            WebDriverWait(driver, 3).until(
+            WebDriverWait(driver, REFRESH_RETRY_WAIT_SECONDS).until(
                 EC.presence_of_element_located((By.XPATH, PURCHASE_BUTTON_XPATH))
             )
             return ScrapeStatus.IN_STOCK, 'purchase_button_retry'
@@ -99,9 +102,13 @@ def _detect_standard_status(driver) -> tuple[ScrapeStatus, str]:
             sold_out_button = driver.find_elements(By.XPATH, '//button[contains(text(), "売り切れました")]')
             if sold_out_button:
                 return ScrapeStatus.OUT_OF_STOCK, 'sold_out_button'
-            return ScrapeStatus.OUT_OF_STOCK, 'retry_failed'
+            return ScrapeStatus.UNKNOWN, 'retry_failed_without_sold_out_marker'
 
-    return ScrapeStatus.OUT_OF_STOCK, 'purchase_missing'
+    sold_out_button = driver.find_elements(By.XPATH, '//button[contains(text(), "売り切れました")]')
+    if sold_out_button:
+        return ScrapeStatus.OUT_OF_STOCK, 'sold_out_button'
+
+    return ScrapeStatus.UNKNOWN, 'purchase_missing_without_sold_out_marker'
 
 
 

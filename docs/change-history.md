@@ -315,3 +315,23 @@
 - 残課題:
   - `resource guard` と同じしきい値に揃える
   - 数日観測して `parallel_level` の条件を補正する
+
+### `mercari` の item 処理速度を改善
+- 事象:
+  - `mercari` が `4万件超` の run で `1時間42分で 987 件` と遅く、完了見込みが `約3日` に伸びていた
+- 原因:
+  - item ごとに Selenium で `driver.get()` と `wait_ready()` を行ううえ、標準判定で `WebDriverWait(..., 3)` を毎回使っていた
+  - さらに browser を `12件ごと` に再生成しており、安定化の代償として throughput が落ちていた
+- 対応:
+  - `scrapers/sites/mercari/adapter.py`
+    - `MERCARI_REBUILD_EVERY` を導入し、default を `30` に変更
+  - `scrapers/sites/mercari/checker.py`
+    - `MERCARI_PURCHASE_WAIT_SECONDS` の default を `1.5`
+    - `MERCARI_REFRESH_RETRY_WAIT_SECONDS` の default を `1.5`
+    - 購入ボタン待機と refresh 後再判定の待ち時間を短縮
+- 検証:
+  - `python3 -m unittest tests.test_mercari_domain_fetch tests.test_site_domain_aliases`
+  - `python3 -m py_compile scrapers/sites/mercari/adapter.py scrapers/sites/mercari/checker.py`
+- 残課題:
+  - 本番の `items/min` と `eta` が改善するかを確認する
+  - まだ遅い場合は `update_item_stock()` の batch 化を検討する

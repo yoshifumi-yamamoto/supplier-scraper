@@ -1,3 +1,5 @@
+import os
+
 from scrapers.common.browser import build_chrome
 from scrapers.common.items import fetch_active_items_by_domain, update_item_stock
 from scrapers.common.run_store import finish_step, start_step
@@ -10,6 +12,8 @@ STATUS_MAP = {
     ScrapeStatus.OUT_OF_STOCK: '在庫なし',
     ScrapeStatus.UNKNOWN: '不明',
 }
+
+MERCARI_REBUILD_EVERY = int(os.getenv("MERCARI_REBUILD_EVERY", "30"))
 
 
 
@@ -27,7 +31,7 @@ def run_pipeline(run_id: str) -> dict:
 
     driver = build_chrome(headless=True)
     processed = 0
-    rebuild_every = 12
+    rebuild_every = max(MERCARI_REBUILD_EVERY, 1)
     try:
         for row in items:
             if processed > 0 and processed % rebuild_every == 0:
