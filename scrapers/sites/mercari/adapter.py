@@ -15,13 +15,6 @@ STATUS_MAP = {
     ScrapeStatus.UNKNOWN: '不明',
 }
 
-MERCARI_REBUILD_EVERY = int(os.getenv("MERCARI_REBUILD_EVERY", "30"))
-MERCARI_UPDATE_BATCH_SIZE = int(os.getenv("MERCARI_UPDATE_BATCH_SIZE", "50"))
-MERCARI_BROWSER_WORKERS = int(os.getenv("MERCARI_BROWSER_WORKERS", "3"))
-MERCARI_SHARD_INDEX = int(os.getenv("SCRAPER_SHARD_INDEX", "0"))
-MERCARI_SHARD_TOTAL = int(os.getenv("SCRAPER_SHARD_TOTAL", "1"))
-
-
 def _split_items(items: list[dict], worker_count: int) -> list[list[dict]]:
     if worker_count <= 1 or len(items) <= 1:
         return [items]
@@ -116,13 +109,18 @@ def _process_chunk(run_id: str, rows: list[dict], rebuild_every: int, update_bat
 
 
 def run_pipeline(run_id: str) -> dict:
+    shard_index = int(os.getenv("SCRAPER_SHARD_INDEX", "0"))
+    shard_total = max(int(os.getenv("SCRAPER_SHARD_TOTAL", "1")), 1)
+    rebuild_every_conf = int(os.getenv("MERCARI_REBUILD_EVERY", "30"))
+    update_batch_size_conf = int(os.getenv("MERCARI_UPDATE_BATCH_SIZE", "50"))
+    worker_count_conf = int(os.getenv("MERCARI_BROWSER_WORKERS", "3"))
     fetch_step = start_step(run_id, 'fetch_items')
     try:
         all_items = fetch_active_items_by_domain(['mercari.com', 'jp.mercari.com'], page_size=50)
-        items = _select_shard_items(all_items, MERCARI_SHARD_INDEX, max(MERCARI_SHARD_TOTAL, 1))
+        items = _select_shard_items(all_items, shard_index, shard_total)
         if not items:
-            if max(MERCARI_SHARD_TOTAL, 1) > 1:
-                finish_step(fetch_step, 'success', f'mercari shard {MERCARI_SHARD_INDEX + 1}/{MERCARI_SHARD_TOTAL} no target items')
+            if shard_total > 1:
+                finish_step(fetch_step, 'success', f'mercari shard {shard_index + 1}/{shard_total} no target items')
             else:
                 finish_step(fetch_step, 'success', 'mercari no target items')
             return {'status': 'success', 'message': 'mercari pipeline completed: 0 items'}
@@ -131,9 +129,9 @@ def run_pipeline(run_id: str) -> dict:
         finish_step(fetch_step, 'failed', f'fetch failed: {exc}')
         raise
 
-    rebuild_every = max(MERCARI_REBUILD_EVERY, 1)
-    update_batch_size = max(MERCARI_UPDATE_BATCH_SIZE, 1)
-    worker_count = max(1, min(MERCARI_BROWSER_WORKERS, len(items)))
+    rebuild_every = max(rebuild_every_conf, 1)
+    update_batch_size = max(update_batch_size_conf, 1)
+    worker_count = max(1, min(worker_count_conf, len(items)))
     chunks = _split_items(items, worker_count)
     json_log(
         'info',
@@ -142,8 +140,8 @@ def run_pipeline(run_id: str) -> dict:
         workers=worker_count,
         chunks=len(chunks),
         items=len(items),
-        shard_index=MERCARI_SHARD_INDEX,
-        shard_total=max(MERCARI_SHARD_TOTAL, 1),
+        shard_index=shard_index,
+        shard_total=shard_total,
     )
 
     try:

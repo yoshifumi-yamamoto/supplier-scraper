@@ -465,3 +465,17 @@
   - `mercari` が running の間は他サイトを `mercari_running_guard` で skip
 - 備考:
   - 既定は `true`。運用で戻す時は env で `false` にできる
+
+### Mercari shard 実行が import 時環境変数読込で無効化されていた問題を修正
+
+- 事象:
+  - `manual_shard_1_of_3` / `2_of_3` / `3_of_3` なのに各 run の `fetch_items` が全て `fetched 41260 items` になっていた
+  - 3 shard で動いているように見えても、実際には各 shard が全件を処理していた
+- 原因:
+  - `scrapers/sites/mercari/adapter.py` が `SCRAPER_SHARD_INDEX` / `SCRAPER_SHARD_TOTAL` を module import 時に読み込んでいた
+  - `apps/runner/main.py` は site adapter import 後に shard 環境変数をセットするため、既定値 `0/1` のまま固定されていた
+- 対応:
+  - shard index / total を `run_pipeline()` 実行時に読むよう修正
+  - runtime shard で fetch 件数が変わる回帰テストを追加
+- 影響:
+  - これまでの `mercari` shard run は真の shard 実行ではなかったため、測定結果は破棄して再実行が必要

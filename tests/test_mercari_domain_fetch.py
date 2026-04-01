@@ -1,4 +1,5 @@
 import unittest
+import os
 import sys
 import types
 from unittest.mock import patch
@@ -65,7 +66,7 @@ class MercariAdapterTests(unittest.TestCase):
     @patch("scrapers.sites.mercari.adapter.start_step", return_value="step-1")
     @patch("scrapers.sites.mercari.adapter.fetch_active_items_by_domain", return_value=[])
     def test_mercari_pipeline_fetches_both_domains(self, fetch_mock, start_step_mock, finish_step_mock) -> None:
-        with patch.object(mercari_adapter, "MERCARI_BROWSER_WORKERS", 1):
+        with patch.dict(os.environ, {"MERCARI_BROWSER_WORKERS": "1"}, clear=False):
             result = mercari_adapter.run_pipeline("run-1")
 
         fetch_mock.assert_called_once_with(["mercari.com", "jp.mercari.com"], page_size=50)
@@ -104,7 +105,7 @@ class MercariAdapterTests(unittest.TestCase):
         ]
         start_step_mock.side_effect = ["fetch-step", "check-step-1", "check-step-2"]
 
-        with patch.object(mercari_adapter, "MERCARI_BROWSER_WORKERS", 1), patch.object(mercari_adapter, "MERCARI_UPDATE_BATCH_SIZE", 2):
+        with patch.dict(os.environ, {"MERCARI_BROWSER_WORKERS": "1", "MERCARI_UPDATE_BATCH_SIZE": "2"}, clear=False):
             result = mercari_adapter.run_pipeline("run-1")
 
         self.assertEqual(result["status"], "success")
