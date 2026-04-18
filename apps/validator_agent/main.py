@@ -29,6 +29,14 @@ ALLOWLIST = {
 }
 AUTO_RETRY = os.getenv("VALIDATOR_AUTO_RETRY", "true").lower() == "true"
 RETRY_MAX_PAGES = int(os.getenv("VALIDATOR_RETRY_MAX_PAGES", "1"))
+AUTO_RETRY_ERROR_TYPES = {
+    s.strip()
+    for s in os.getenv(
+        "VALIDATOR_AUTO_RETRY_ERROR_TYPES",
+        "proxy,network,timeout,db_timeout",
+    ).split(",")
+    if s.strip()
+}
 STALE_RUNNING_MINUTES = int(os.getenv("VALIDATOR_STALE_RUNNING_MINUTES", "120"))
 AI_NOTIFY_ENABLED = os.getenv("VALIDATOR_AI_NOTIFY_ENABLED", "true").lower() == "true"
 AI_MODEL = os.getenv("VALIDATOR_OPENAI_MODEL", "gpt-5-mini")
@@ -690,6 +698,11 @@ def run_validator() -> dict[str, Any]:
 
         if not _is_transient(err):
             skipped.append({"site": site, "run_id": run_id, "reason": "non_transient_error", "error_type": classify_error(err)})
+            continue
+
+        error_type = classify_error(err)
+        if AUTO_RETRY_ERROR_TYPES and error_type not in AUTO_RETRY_ERROR_TYPES:
+            skipped.append({"site": site, "run_id": run_id, "reason": "retry_error_type_blocked", "error_type": error_type})
             continue
 
         if _site_running(runs, site):
