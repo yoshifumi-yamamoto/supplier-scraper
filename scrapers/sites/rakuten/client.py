@@ -9,7 +9,7 @@ RAKUTEN_ACCESS_KEY = os.getenv("RAKUTEN_ACCESS_KEY", "").strip()
 RAKUTEN_AFFILIATE_ID = os.getenv("RAKUTEN_AFFILIATE_ID", "").strip()
 RAKUTEN_BASE_URL = os.getenv(
     "RAKUTEN_BASE_URL",
-    "https://app.rakuten.co.jp/services/api/IchibaItem/Search/20220601",
+    "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260401",
 ).strip()
 
 
@@ -30,8 +30,6 @@ def fetch_item_by_code(item_code: str) -> dict[str, Any] | None:
         "accessKey": RAKUTEN_ACCESS_KEY,
         "itemCode": item_code,
         "format": "json",
-        "formatVersion": 2,
-        "elements": "itemCode,itemName,itemPrice,itemUrl,shopCode,availability",
     }
     if RAKUTEN_AFFILIATE_ID:
         params["affiliateId"] = RAKUTEN_AFFILIATE_ID

@@ -21,3 +21,7 @@
 - `RAKUTEN_AFFILIATE_ID`
 - `RAKUTEN_BASE_URL`
 - `RAKUTEN_SITE_KEY`
+
+## API endpoint
+- 既定 endpoint は `https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260401`
+- 初回疎通は `keyword` で確認し、`itemCode` は最小パラメータで使う
