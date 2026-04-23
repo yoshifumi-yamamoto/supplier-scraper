@@ -30,6 +30,7 @@
 
 ## Rakuten方針
 - RakutenはHTMLスクレイピングではなくAPI監視に統一する。
+- 最小 env 契約は `RAKUTEN_APPLICATION_ID`, `RAKUTEN_ACCESS_KEY`, `RAKUTEN_AFFILIATE_ID`, `RAKUTEN_BASE_URL`, `RAKUTEN_SITE_KEY`。
 - 詳細は `docs/rakuten-api-monitoring.md` を参照。
 
 ## 起動
