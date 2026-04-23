@@ -15,6 +15,16 @@ class RakutenApiPipelineTests(unittest.TestCase):
         parsed = rakuten_adapter._parse_item_code_from_url("https://www.rakuten.co.jp/testshop/abc123/")
         self.assertEqual(parsed, ("testshop", "abc123"))
 
+    def test_parse_saved_item_code(self) -> None:
+        self.assertEqual(
+            rakuten_adapter._parse_saved_item_code("rakuten:testshop:abc123"),
+            ("confirmed", "testshop:abc123"),
+        )
+        self.assertEqual(
+            rakuten_adapter._parse_saved_item_code("rakuten-pending:testshop:def456"),
+            ("pending", "testshop:def456"),
+        )
+
     def test_normalize_item_maps_availability(self) -> None:
         self.assertEqual(normalize_item({"availability": 1})[0], ScrapeStatus.IN_STOCK)
         self.assertEqual(normalize_item({"availability": 0})[0], ScrapeStatus.OUT_OF_STOCK)
@@ -39,6 +49,40 @@ class RakutenApiPipelineTests(unittest.TestCase):
         fetch_item_mock.assert_called_once_with("abc123", shop_code="testshop")
         updates = bulk_update_mock.call_args.args[0]
         self.assertEqual(updates[0]["scraped_stock_status"], "在庫なし")
+
+    @patch("scrapers.sites.rakuten.adapter.update_item_stock_bulk")
+    @patch(
+        "scrapers.sites.rakuten.adapter.search_items",
+        return_value=[
+            {
+                "itemCode": "testshop:abc123",
+                "shopCode": "testshop",
+                "itemName": "Test Product ABC123",
+                "availability": 0,
+                "itemPrice": 1000,
+            }
+        ],
+    )
+    @patch("scrapers.sites.rakuten.adapter.fetch_active_items_by_domain")
+    @patch("scrapers.sites.rakuten.adapter.auth_ready", return_value=True)
+    def test_run_pipeline_confirms_discovery_candidate(self, _auth_ready, fetch_items_mock, _search_mock, bulk_update_mock) -> None:
+        fetch_items_mock.return_value = [
+            {
+                "ebay_item_id": "148",
+                "stocking_url": "https://item.rakuten.co.jp/testshop/abc123/",
+                "title": "Test Product ABC123",
+                "price": 1000,
+                "image_url": None,
+                "sku": None,
+            }
+        ]
+
+        result = rakuten_adapter.run_pipeline("run-2")
+
+        self.assertEqual(result["status"], "success")
+        updates = bulk_update_mock.call_args.args[0]
+        self.assertEqual(updates[0]["scraped_stock_status"], "在庫なし")
+        self.assertEqual(updates[0]["sku"], "rakuten:testshop:abc123")
 
 
 if __name__ == "__main__":

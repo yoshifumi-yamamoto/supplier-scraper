@@ -17,7 +17,7 @@ MIN_PAGE_SIZE = int(os.getenv("SUPABASE_MIN_PAGE_SIZE", "10"))
 FETCH_MAX_RETRIES = int(os.getenv("FETCH_MAX_RETRIES", "5"))
 FETCH_BACKOFF_BASE = float(os.getenv("FETCH_BACKOFF_BASE", "2.0"))
 UPDATE_MAX_RETRIES = int(os.getenv("UPDATE_MAX_RETRIES", "4"))
-ITEM_UPDATE_MAX_WORKERS = int(os.getenv("ITEM_UPDATE_MAX_WORKERS", "8"))
+ITEM_UPDATE_MAX_WORKERS = int(os.getenv("ITEM_UPDATE_MAX_WORKERS", "4"))
 
 
 def _headers() -> dict[str, str]:
@@ -53,7 +53,7 @@ def _normalize_stocking_domains(domains: Union[str, Iterable[str]]) -> list[str]
 
 def _build_fetch_params(domains: list[str], size: int, last_item_id: Union[str, None], *, use_stocking_domain: bool) -> dict[str, str]:
     params = {
-        "select": "ebay_item_id,ebay_user_id,stocking_url,listing_status,stocking_domain",
+        "select": "ebay_item_id,ebay_user_id,stocking_url,listing_status,stocking_domain,sku,title,price,image_url",
         "listing_status": "eq.Active",
         "order": "ebay_item_id.asc",
         "limit": str(size),
@@ -203,7 +203,13 @@ def fetch_active_items_by_domain(domain: Union[str, Iterable[str]], page_size: U
     return all_rows
 
 
-def update_item_stock(ebay_item_id: str, scraped_stock_status: str, *, is_scraped: bool = True) -> None:
+def update_item_stock(
+    ebay_item_id: str,
+    scraped_stock_status: str,
+    *,
+    is_scraped: bool = True,
+    sku: Optional[str] = None,
+) -> None:
     if not _enabled():
         raise RuntimeError("SUPABASE_URL / SUPABASE_KEY is not set")
     payload = {
@@ -211,6 +217,8 @@ def update_item_stock(ebay_item_id: str, scraped_stock_status: str, *, is_scrape
         "scraped_updated_at": datetime.now(timezone.utc).isoformat(),
         "is_scraped": is_scraped,
     }
+    if sku is not None:
+        payload["sku"] = sku
     last_exc = None
     for attempt in range(UPDATE_MAX_RETRIES):
         try:
@@ -242,23 +250,52 @@ def update_item_stock_bulk(
         return
 
     worker_count = max(1, max_workers or ITEM_UPDATE_MAX_WORKERS)
-    errors: list[str] = []
+    failed_updates: list[tuple[dict[str, Any], str]] = []
 
     def _apply(update: dict[str, Any]) -> None:
         update_item_stock(
             ebay_item_id=str(update["ebay_item_id"]),
             scraped_stock_status=str(update["scraped_stock_status"]),
             is_scraped=bool(update.get("is_scraped", True)),
+            sku=update.get("sku"),
         )
 
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
-        futures = [executor.submit(_apply, update) for update in updates]
-        for future in as_completed(futures):
+        future_map = {executor.submit(_apply, update): update for update in updates}
+        for future in as_completed(future_map):
+            update = future_map[future]
             try:
                 future.result()
             except Exception as exc:  # noqa: BLE001
-                errors.append(str(exc))
+                failed_updates.append((update, str(exc)))
 
-    if errors:
-        preview = " | ".join(errors[:3])
+    if not failed_updates:
+        return
+
+    json_log(
+        "warning",
+        "items bulk update retrying sequentially after parallel failures",
+        failed_count=len(failed_updates),
+        total_count=len(updates),
+        worker_count=worker_count,
+        preview=" | ".join(error for _, error in failed_updates[:3])[:500],
+    )
+
+    final_errors: list[str] = []
+    for update, original_error in failed_updates:
+        try:
+            time.sleep(0.25)
+            _apply(update)
+        except Exception as exc:  # noqa: BLE001
+            final_errors.append(f"{update.get('ebay_item_id')}: {exc}")
+        else:
+            json_log(
+                "info",
+                "items bulk update recovered in sequential retry",
+                ebay_item_id=str(update.get("ebay_item_id", "")),
+                original_error=original_error[:300],
+            )
+
+    if final_errors:
+        preview = " | ".join(final_errors[:3])
         raise RuntimeError(f"bulk update failed: {preview}")

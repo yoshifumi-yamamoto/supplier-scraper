@@ -11,7 +11,9 @@
 
 ## TODO
 1. Rakuten Web Service credential を KAGOYA `.env` に設定する
-2. `itemCode` 解決不能 URL の扱いを sample 検証する
+2. 初回 discovery は `shopCode + keyword` 検索で候補を出し、型番一致を最優先に価格差・タイトル類似度・画像一致で confidence 判定する
+3. high confidence のみ API 返却 `itemCode` を正式IDとして保存する
+4. low confidence 候補は `pending` として保存し、在庫監視対象に入れない
 3. `scrape_runs / scrape_run_steps` の本番 run を確認する
 4. ダッシュボードで `source=api` の表示を確認する
 
@@ -24,4 +26,5 @@
 
 ## API endpoint
 - 既定 endpoint は `https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260401`
-- 初回疎通は `keyword` で確認し、`itemCode` は最小パラメータで使う
+- 初回疎通は `keyword` で確認し、正式 `itemCode` は API レスポンスから保存する
+- URL / HTML の `sku` は正式 `itemCode` とみなさない

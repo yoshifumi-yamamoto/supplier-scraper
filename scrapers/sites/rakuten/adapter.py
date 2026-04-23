@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+from difflib import SequenceMatcher
 from typing import Any
 from urllib.parse import urlparse
 
@@ -7,7 +9,7 @@ from scrapers.common.items import fetch_active_items_by_domain, update_item_stoc
 from scrapers.common.logging_utils import json_log
 from scrapers.common.models import ScrapeStatus
 from scrapers.common.run_store import finish_step, start_step
-from scrapers.sites.rakuten.client import RakutenApiError, auth_ready, fetch_item_by_code
+from scrapers.sites.rakuten.client import RakutenApiError, auth_ready, fetch_item_by_code, search_items
 from scrapers.sites.rakuten.normalizer import normalize_item
 
 
@@ -19,6 +21,35 @@ STATUS_MAP = {
 }
 
 RAKUTEN_DOMAINS = ["item.rakuten.co.jp", "www.rakuten.co.jp"]
+RAKUTEN_CONFIRMED_PREFIX = "rakuten:"
+RAKUTEN_PENDING_PREFIX = "rakuten-pending:"
+MODEL_RE = re.compile(r"\b[a-z0-9]+(?:[-_][a-z0-9]+)+\b", re.IGNORECASE)
+
+
+def _normalize_text(text: str | None) -> str:
+    return re.sub(r"\s+", " ", (text or "")).strip().lower()
+
+
+def _extract_models(*values: str | None) -> list[str]:
+    models: list[str] = []
+    for value in values:
+        for match in MODEL_RE.findall((value or "").lower()):
+            if len(match) < 5:
+                continue
+            if match not in models:
+                models.append(match)
+    return models
+
+
+def _parse_saved_item_code(sku: str | None) -> tuple[str | None, str | None]:
+    value = (sku or "").strip()
+    if not value:
+        return None, None
+    if value.startswith(RAKUTEN_CONFIRMED_PREFIX):
+        return "confirmed", value[len(RAKUTEN_CONFIRMED_PREFIX) :]
+    if value.startswith(RAKUTEN_PENDING_PREFIX):
+        return "pending", value[len(RAKUTEN_PENDING_PREFIX) :]
+    return None, None
 
 
 def _parse_item_code_from_url(stocking_url: str) -> tuple[str, str] | None:
@@ -35,6 +66,142 @@ def _parse_item_code_from_url(stocking_url: str) -> tuple[str, str] | None:
     if host not in RAKUTEN_DOMAINS:
         return None
     return shop_code, item_local_code
+
+
+def _normalize_image_key(url: str | None) -> str:
+    if not url:
+        return ""
+    candidate = url.split("?")[0].rstrip("/")
+    return candidate.rsplit("/", 1)[-1].lower()
+
+
+def _candidate_image_match(row_image: str | None, candidate: dict[str, Any]) -> bool:
+    row_key = _normalize_image_key(row_image)
+    if not row_key:
+        return False
+    image_urls = []
+    for key in ("mediumImageUrls", "smallImageUrls"):
+        values = candidate.get(key) or []
+        if isinstance(values, list):
+            for value in values:
+                if isinstance(value, dict):
+                    image_urls.append(value.get("imageUrl") or value.get("url") or "")
+                elif isinstance(value, str):
+                    image_urls.append(value)
+    image_urls.append(candidate.get("imageUrl") or candidate.get("mediumImageUrl") or "")
+    return any(_normalize_image_key(url) == row_key for url in image_urls if url)
+
+
+def _score_candidate(
+    *,
+    candidate: dict[str, Any],
+    shop_code: str,
+    models: list[str],
+    row_title: str,
+    row_price: Any,
+    row_image_url: str | None,
+) -> tuple[float, list[str]]:
+    reasons: list[str] = []
+    score = 0.0
+    candidate_shop = (candidate.get("shopCode") or "").strip().lower()
+    if candidate_shop != shop_code.lower():
+        return 0.0, ["shop_mismatch"]
+
+    score += 0.2
+    reasons.append("shop_match")
+
+    candidate_title = _normalize_text(candidate.get("itemName") or candidate.get("itemCaption"))
+    candidate_item_code = _normalize_text(candidate.get("itemCode"))
+    model_exact = False
+    for model in models:
+        if model and (model in candidate_title or model in candidate_item_code):
+            score += 0.45
+            reasons.append(f"model_match:{model}")
+            model_exact = True
+            break
+
+    title_ratio = SequenceMatcher(None, _normalize_text(row_title), candidate_title).ratio() if row_title and candidate_title else 0.0
+    if title_ratio >= 0.75:
+        score += 0.2
+        reasons.append(f"title_sim:{title_ratio:.2f}")
+    elif title_ratio >= 0.55:
+        score += 0.1
+        reasons.append(f"title_sim_weak:{title_ratio:.2f}")
+
+    try:
+        base_price = float(row_price) if row_price is not None else None
+        candidate_price = float(candidate.get("itemPrice")) if candidate.get("itemPrice") is not None else None
+    except (TypeError, ValueError):
+        base_price = None
+        candidate_price = None
+    if base_price and candidate_price:
+        delta = abs(candidate_price - base_price) / max(base_price, 1.0)
+        if delta <= 0.05:
+            score += 0.1
+            reasons.append(f"price_close:{delta:.2f}")
+        elif delta <= 0.15:
+            score += 0.05
+            reasons.append(f"price_near:{delta:.2f}")
+
+    if _candidate_image_match(row_image_url, candidate):
+        score += 0.15
+        reasons.append("image_match")
+
+    if model_exact and score >= 0.65:
+        score += 0.05
+
+    return min(score, 1.0), reasons
+
+
+def _build_search_keywords(*, title: str, local_code_hint: str | None) -> list[str]:
+    keywords: list[str] = []
+    models = _extract_models(local_code_hint, title)
+    keywords.extend(models[:3])
+    normalized_title = " ".join((title or "").split())
+    if normalized_title:
+        keywords.append(normalized_title[:120])
+    unique_keywords: list[str] = []
+    for keyword in keywords:
+        value = keyword.strip()
+        if value and value not in unique_keywords:
+            unique_keywords.append(value)
+    return unique_keywords
+
+
+def _discover_item(
+    *,
+    shop_code: str,
+    local_code_hint: str | None,
+    row_title: str,
+    row_price: Any,
+    row_image_url: str | None,
+) -> tuple[dict[str, Any] | None, float, list[str], str | None]:
+    best_candidate: dict[str, Any] | None = None
+    best_score = 0.0
+    best_reasons: list[str] = []
+    best_keyword: str | None = None
+    models = _extract_models(local_code_hint, row_title)
+    for keyword in _build_search_keywords(title=row_title, local_code_hint=local_code_hint):
+        candidates = search_items(keyword=keyword, shop_code=shop_code, hits=10)
+        for candidate in candidates:
+            score, reasons = _score_candidate(
+                candidate=candidate,
+                shop_code=shop_code,
+                models=models,
+                row_title=row_title,
+                row_price=row_price,
+                row_image_url=row_image_url,
+            )
+            if score > best_score:
+                best_candidate = candidate
+                best_score = score
+                best_reasons = reasons
+                best_keyword = keyword
+        if best_score >= 0.85:
+            break
+    if best_keyword:
+        best_reasons = [f"keyword:{best_keyword}", *best_reasons]
+    return best_candidate, best_score, best_reasons, best_keyword
 
 
 def _log_item_result(*, run_id: str, ebay_item_id: str, stocking_url: str, item_code: str | None, shop_code: str | None, status: ScrapeStatus, message: str) -> None:
@@ -94,17 +261,54 @@ def run_pipeline(run_id: str) -> dict[str, Any]:
         item_code = parsed[1] if parsed else None
         step_id = start_step(run_id=run_id, step_name=f"check:{ebay_item_id}")
         try:
-            if not item_code:
+            saved_state, saved_item_code = _parse_saved_item_code(row.get("sku"))
+            if saved_state == "pending":
                 status = ScrapeStatus.UNKNOWN
-                message = "rakuten itemCode could not be resolved from stocking_url"
-            else:
+                message = f"rakuten candidate unresolved: {saved_item_code or 'pending'}"
+                next_sku = row.get("sku")
+                item_code = saved_item_code or item_code
+            elif saved_state == "confirmed" and saved_item_code:
+                item_code = saved_item_code
                 raw = fetch_item_by_code(item_code, shop_code=shop_code)
                 status, message = normalize_item(raw)
+                next_sku = row.get("sku")
+            else:
+                row_title = row.get("title") or ""
+                row_price = row.get("price")
+                row_image_url = row.get("image_url")
+                local_code_hint = item_code
+                if not shop_code:
+                    status = ScrapeStatus.UNKNOWN
+                    message = "rakuten shopCode could not be resolved from stocking_url"
+                    next_sku = row.get("sku")
+                else:
+                    candidate, confidence, reasons, _ = _discover_item(
+                        shop_code=shop_code,
+                        local_code_hint=local_code_hint,
+                        row_title=row_title,
+                        row_price=row_price,
+                        row_image_url=row_image_url,
+                    )
+                    if candidate and confidence >= 0.85 and candidate.get("itemCode"):
+                        item_code = str(candidate["itemCode"])
+                        status, normalized_message = normalize_item(candidate)
+                        message = f"{normalized_message} | discovery_confirmed confidence={confidence:.2f} reasons={','.join(reasons[:4])}"
+                        next_sku = f"{RAKUTEN_CONFIRMED_PREFIX}{item_code}"
+                    elif candidate and confidence >= 0.55 and candidate.get("itemCode"):
+                        item_code = str(candidate["itemCode"])
+                        status = ScrapeStatus.UNKNOWN
+                        message = f"rakuten candidate pending confidence={confidence:.2f} reasons={','.join(reasons[:4])}"
+                        next_sku = f"{RAKUTEN_PENDING_PREFIX}{item_code}"
+                    else:
+                        status = ScrapeStatus.UNKNOWN
+                        message = "rakuten itemCode discovery unresolved"
+                        next_sku = row.get("sku")
             pending_updates.append(
                 {
                     "ebay_item_id": ebay_item_id,
                     "scraped_stock_status": STATUS_MAP[status],
                     "is_scraped": status != ScrapeStatus.UNKNOWN,
+                    "sku": next_sku,
                 }
             )
             _log_item_result(
@@ -146,6 +350,7 @@ def run_pipeline(run_id: str) -> dict[str, Any]:
                     "ebay_item_id": ebay_item_id,
                     "scraped_stock_status": "不明",
                     "is_scraped": False,
+                    "sku": row.get("sku"),
                 }
             )
             unknown += 1
