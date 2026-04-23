@@ -24,6 +24,7 @@ RAKUTEN_DOMAINS = ["item.rakuten.co.jp", "www.rakuten.co.jp"]
 RAKUTEN_CONFIRMED_PREFIX = "rakuten:"
 RAKUTEN_PENDING_PREFIX = "rakuten-pending:"
 MODEL_RE = re.compile(r"\b[a-z0-9]+(?:[-_][a-z0-9]+)+\b", re.IGNORECASE)
+ALNUM_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 
 
 def _normalize_text(text: str | None) -> str:
@@ -156,14 +157,31 @@ def _score_candidate(
 def _build_search_keywords(*, title: str, local_code_hint: str | None) -> list[str]:
     keywords: list[str] = []
     models = _extract_models(local_code_hint, title)
-    keywords.extend(models[:3])
+    for model in models[:3]:
+        normalized_model = model.replace("_", "-").strip("- ")
+        if len(normalized_model) >= 5 and not normalized_model.isdigit():
+            keywords.append(normalized_model)
     normalized_title = " ".join((title or "").split())
     if normalized_title:
-        keywords.append(normalized_title[:120])
+        cleaned_title = re.sub(r"[^\w\s\-]", " ", normalized_title, flags=re.UNICODE)
+        cleaned_title = re.sub(r"\s+", " ", cleaned_title).strip()
+        title_tokens = [
+            token
+            for token in cleaned_title.split()
+            if len(ALNUM_RE.findall(token)) > 0 and not token.isdigit()
+        ]
+        if title_tokens:
+            keywords.append(" ".join(title_tokens[:8])[:120])
     unique_keywords: list[str] = []
     for keyword in keywords:
         value = keyword.strip()
-        if value and value not in unique_keywords:
+        if not value:
+            continue
+        if len(value) < 3:
+            continue
+        if value.isdigit():
+            continue
+        if value not in unique_keywords:
             unique_keywords.append(value)
     return unique_keywords
 

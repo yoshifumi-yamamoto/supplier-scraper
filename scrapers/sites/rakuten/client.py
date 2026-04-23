@@ -1,4 +1,5 @@
 import os
+import time
 from typing import Any, Optional
 
 import requests
@@ -11,6 +12,9 @@ RAKUTEN_BASE_URL = os.getenv(
     "RAKUTEN_BASE_URL",
     "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260401",
 ).strip()
+RAKUTEN_REQUEST_INTERVAL_SECONDS = float(os.getenv("RAKUTEN_REQUEST_INTERVAL_SECONDS", "1.1"))
+RAKUTEN_MAX_RETRIES = int(os.getenv("RAKUTEN_MAX_RETRIES", "3"))
+_LAST_REQUEST_AT = 0.0
 
 
 class RakutenApiError(RuntimeError):
@@ -44,11 +48,23 @@ def _unwrap_items(body: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _request(params: dict[str, Any]) -> dict[str, Any]:
-    response = requests.get(RAKUTEN_BASE_URL, params=params, timeout=20)
-    preview = response.text[:300].replace("\n", " ")
-    if response.status_code >= 400:
-        raise RakutenApiError(f"rakuten api error {response.status_code}: {preview}")
-    return response.json()
+    global _LAST_REQUEST_AT
+    last_error: Optional[str] = None
+    for attempt in range(RAKUTEN_MAX_RETRIES):
+        elapsed = time.monotonic() - _LAST_REQUEST_AT
+        if elapsed < RAKUTEN_REQUEST_INTERVAL_SECONDS:
+            time.sleep(RAKUTEN_REQUEST_INTERVAL_SECONDS - elapsed)
+        response = requests.get(RAKUTEN_BASE_URL, params=params, timeout=20)
+        _LAST_REQUEST_AT = time.monotonic()
+        preview = response.text[:300].replace("\n", " ")
+        if response.status_code == 429:
+            last_error = f"rakuten api error 429: {preview}"
+            time.sleep(max(RAKUTEN_REQUEST_INTERVAL_SECONDS, 1.0) * (attempt + 1))
+            continue
+        if response.status_code >= 400:
+            raise RakutenApiError(f"rakuten api error {response.status_code}: {preview}")
+        return response.json()
+    raise RakutenApiError(last_error or "rakuten api error 429")
 
 
 def fetch_item_by_code(item_code: str, *, shop_code: Optional[str] = None) -> Optional[dict[str, Any]]:
