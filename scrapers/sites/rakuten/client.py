@@ -21,7 +21,7 @@ def auth_ready() -> bool:
     return bool(RAKUTEN_APPLICATION_ID and RAKUTEN_ACCESS_KEY and RAKUTEN_BASE_URL)
 
 
-def fetch_item_by_code(item_code: str) -> dict[str, Any] | None:
+def fetch_item_by_code(item_code: str, *, shop_code: str | None = None) -> dict[str, Any] | None:
     if not auth_ready():
         raise RakutenApiError("rakuten auth not configured")
 
@@ -31,6 +31,8 @@ def fetch_item_by_code(item_code: str) -> dict[str, Any] | None:
         "itemCode": item_code,
         "format": "json",
     }
+    if shop_code:
+        params["shopCode"] = shop_code
     if RAKUTEN_AFFILIATE_ID:
         params["affiliateId"] = RAKUTEN_AFFILIATE_ID
 

@@ -21,7 +21,7 @@ STATUS_MAP = {
 RAKUTEN_DOMAINS = ["item.rakuten.co.jp", "www.rakuten.co.jp"]
 
 
-def _parse_item_code_from_url(stocking_url: str) -> str | None:
+def _parse_item_code_from_url(stocking_url: str) -> tuple[str, str] | None:
     if not stocking_url:
         return None
     parsed = urlparse(stocking_url)
@@ -34,10 +34,10 @@ def _parse_item_code_from_url(stocking_url: str) -> str | None:
         return None
     if host not in RAKUTEN_DOMAINS:
         return None
-    return f"{shop_code}:{item_local_code}"
+    return shop_code, item_local_code
 
 
-def _log_item_result(*, run_id: str, ebay_item_id: str, stocking_url: str, item_code: str | None, status: ScrapeStatus, message: str) -> None:
+def _log_item_result(*, run_id: str, ebay_item_id: str, stocking_url: str, item_code: str | None, shop_code: str | None, status: ScrapeStatus, message: str) -> None:
     json_log(
         "info",
         "rakuten item api result",
@@ -45,6 +45,7 @@ def _log_item_result(*, run_id: str, ebay_item_id: str, stocking_url: str, item_
         site="rakuten",
         ebay_item_id=ebay_item_id,
         stocking_url=stocking_url,
+        shop_code=shop_code,
         item_code=item_code,
         scrape_status=STATUS_MAP[status],
         scrape_message=message,
@@ -88,14 +89,16 @@ def run_pipeline(run_id: str) -> dict[str, Any]:
         if not ebay_item_id:
             continue
         stocking_url = row.get("stocking_url") or ""
-        item_code = _parse_item_code_from_url(stocking_url)
+        parsed = _parse_item_code_from_url(stocking_url)
+        shop_code = parsed[0] if parsed else None
+        item_code = parsed[1] if parsed else None
         step_id = start_step(run_id=run_id, step_name=f"check:{ebay_item_id}")
         try:
             if not item_code:
                 status = ScrapeStatus.UNKNOWN
                 message = "rakuten itemCode could not be resolved from stocking_url"
             else:
-                raw = fetch_item_by_code(item_code)
+                raw = fetch_item_by_code(item_code, shop_code=shop_code)
                 status, message = normalize_item(raw)
             pending_updates.append(
                 {
@@ -108,6 +111,7 @@ def run_pipeline(run_id: str) -> dict[str, Any]:
                 run_id=run_id,
                 ebay_item_id=str(ebay_item_id),
                 stocking_url=stocking_url,
+                shop_code=shop_code,
                 item_code=item_code,
                 status=status,
                 message=message,
@@ -132,6 +136,7 @@ def run_pipeline(run_id: str) -> dict[str, Any]:
                 site="rakuten",
                 ebay_item_id=ebay_item_id,
                 stocking_url=stocking_url,
+                shop_code=shop_code,
                 item_code=item_code,
                 error=err[:300],
                 source="api",

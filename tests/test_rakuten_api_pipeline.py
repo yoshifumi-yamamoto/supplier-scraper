@@ -8,12 +8,12 @@ from scrapers.sites.rakuten.normalizer import normalize_item
 
 class RakutenApiPipelineTests(unittest.TestCase):
     def test_parse_item_code_from_item_url(self) -> None:
-        item_code = rakuten_adapter._parse_item_code_from_url("https://item.rakuten.co.jp/testshop/abc123/")
-        self.assertEqual(item_code, "testshop:abc123")
+        parsed = rakuten_adapter._parse_item_code_from_url("https://item.rakuten.co.jp/testshop/abc123/")
+        self.assertEqual(parsed, ("testshop", "abc123"))
 
     def test_parse_item_code_from_www_url(self) -> None:
-        item_code = rakuten_adapter._parse_item_code_from_url("https://www.rakuten.co.jp/testshop/abc123/")
-        self.assertEqual(item_code, "testshop:abc123")
+        parsed = rakuten_adapter._parse_item_code_from_url("https://www.rakuten.co.jp/testshop/abc123/")
+        self.assertEqual(parsed, ("testshop", "abc123"))
 
     def test_normalize_item_maps_availability(self) -> None:
         self.assertEqual(normalize_item({"availability": 1})[0], ScrapeStatus.IN_STOCK)
@@ -36,7 +36,7 @@ class RakutenApiPipelineTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "success")
         fetch_items_mock.assert_called_once_with(rakuten_adapter.RAKUTEN_DOMAINS, page_size=50)
-        fetch_item_mock.assert_called_once_with("testshop:abc123")
+        fetch_item_mock.assert_called_once_with("abc123", shop_code="testshop")
         updates = bulk_update_mock.call_args.args[0]
         self.assertEqual(updates[0]["scraped_stock_status"], "在庫なし")
 
