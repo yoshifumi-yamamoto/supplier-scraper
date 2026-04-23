@@ -15,6 +15,38 @@
 
 ---
 
+## 2026-04-23
+
+### dashboard API の Supabase 障害を degraded 応答 + 通知に変更
+- 事象:
+  - `supplier-dashboard-api.service` は起動していても、Supabase DNS/到達障害で `/api/overview` や `/api/mcp/summary` が 500 になり、frontend 全体が壊れて見えた
+- 原因:
+  - dashboard API は upstream 失敗時にそのまま 500 JSON を返しており、frontend は fallback を持っていても API 側の情報が乏しく、障害検知も API レイヤではしていなかった
+- 対応:
+  - `apps/dashboard_api/main.py`
+  - `overview` / `system_schedule` / `capacity` / `mcp_summary` / `validator_summary` で、Supabase 失敗時は 500 ではなく degraded fallback JSON を返すよう変更
+  - `db_timeout` / `network` / `timeout` を検知した場合は Chat 通知するよう追加
+  - 通知は `/tmp/dashboard_api_alert_state.json` を使って cooldown する
+- 検証:
+  - `python3 -m py_compile apps/dashboard_api/main.py`
+- 残課題:
+  - KAGOYA 反映後に、意図的に upstream を落とした状態で frontend が崩れず degraded 表示になるか確認する
+  - cooldown 秒数 (`DASHBOARD_ALERT_COOLDOWN_SECONDS`) の調整
+
+### KAGOYA DNS 障害の恒久原因を追記
+- 事象:
+  - reboot 前、`dig kmwyjsvjwtxqqvgrccxh.supabase.co` が `SERVFAIL` / timeout
+  - `curl https://...supabase.co` が `Could not resolve host`
+- 原因:
+  - VM 上の `systemd-resolved` / network state が不安定化
+  - さらに `/etc/netplan/50-cloud-init.yaml` と `/run/systemd/network/10-netplan-eth0.network` に KAGOYA DNS が固定されており、public DNS 変更は reboot で戻る構成だった
+- 対応:
+  - VM reboot で一時復旧
+  - 原因と再発条件を docs に明記
+- 残課題:
+  - cloud-init / netplan の恒久 DNS 上書き方針を決める
+  - resolver 不調を監視するヘルスチェックを追加する
+
 ## 2026-03-28
 
 ### `fetch_active_items_by_domain()` の複数 domain query を修正
@@ -218,6 +250,23 @@
   - `rakuma` は `running` でも進捗メータを共通計算できず、ダッシュボード上で件数進捗が出しづらかった
 - 原因:
   - adapter が `fetch_items` の message に `fetched={N}` を使い、item 単位の `check:<ebay_item_id>` ではなく bulk の `check_stock` を積んでいた
+
+## 2026-04-03
+
+### 楽天・Yahoo!ショッピング・Amazon を API 監視前提で設計開始
+- 事象:
+  - 既存 Selenium サイトの最適化を進めつつ、次段で `楽天市場 / Yahoo!ショッピング / Amazon` の在庫監視を追加したい要求が出た
+- 判断:
+  - 新規3サイトまで Selenium で増やすと、`1日2回` 要件に対して CPU コストが重すぎる
+  - 新規 site は API 優先で別レーン設計にする方が、throughput と安定性の面で有利
+- 対応:
+  - `docs/api-stock-monitoring-design.md` を新設
+  - `rakuten / yahoo_shopping / amazon` を共通の `client -> normalizer -> adapter` 構成で追加する方針を明文化
+  - `phase-3` にも「新規3サイトは API 監視前提」として追記
+- 残課題:
+  - `rakuten` の認証方式と item 主キーの確定
+  - `Yahoo!ショッピング` の item 識別子を URL から解決できるか確認
+  - `Amazon` で利用可能な API と credential の保有状況確認
 - 対応:
   - `scrapers/sites/rakuma/adapter.py` を修正
   - `fetch_items` の success message を `fetched {N} items` に統一
@@ -479,3 +528,31 @@
   - runtime shard で fetch 件数が変わる回帰テストを追加
 - 影響:
   - これまでの `mercari` shard run は真の shard 実行ではなかったため、測定結果は破棄して再実行が必要
+
+### KAGOYA 側 DNS resolver 障害で dashboard-web が落ちて見えた件
+
+- 事象:
+  - `marketpilot-dashboard-web.service` 自体は `active (running)` なのに、画面が壊れて見えた
+  - `supplier-dashboard-api.service` の `/api/mcp/summary` や `/api/overview` が `500` を返していた
+  - KAGOYA 上で `dig kmwyjsvjwtxqqvgrccxh.supabase.co` が `SERVFAIL`、`curl https://kmwyjsvjwtxqqvgrccxh.supabase.co` が `Could not resolve host` になった
+- 原因:
+  - `apps/dashboard_api/main.py` が Supabase REST を直接読む構成で、KAGOYA VM 側の `systemd-resolved` / DNS が壊れると API 全体が 500 化する
+  - 実際の resolver log では KAGOYA 既定 DNS (`210.134.55.219`, `210.134.48.31`) だけでなく public DNS (`1.1.1.1`, `8.8.8.8`) に切り替えても `UDP <-> TCP` degrade を繰り返しており、resolver 自体の不安定化が見えた
+  - その結果、web 側は生きていても backend API failure に巻き込まれて「frontend が落ちた」ように見えた
+- 確認:
+  - `curl -I http://127.0.0.1:3000/` は `200 OK`
+  - `systemctl status marketpilot-dashboard-web.service` は `active`
+  - 一方で `curl -sS http://127.0.0.1:8080/api/overview | head` は Supabase name resolution failure を返していた
+  - VM reboot 後は `dig +short kmwyjsvjwtxqqvgrccxh.supabase.co` が IP を返し、`supplier-dashboard-api.service` / `marketpilot-dashboard-web.service` とも正常化した
+- 対応:
+  - KAGOYA VM を再起動して resolver/network state をリセット
+  - 再起動後に
+    - `supplier-dashboard-api.service`
+    - `marketpilot-dashboard-web.service`
+    - `http://127.0.0.1:8080/api/overview`
+    - `http://127.0.0.1:3000/`
+    の復旧を確認
+- 残課題:
+  - dashboard API で Supabase DNS failure 時に `500` を返さず fallback JSON を返す
+  - dashboard-web 側も upstream API failure で画面全体が壊れて見えないよう guard を強める
+  - KAGOYA 側 DNS 障害時の runbook を docs に固定する

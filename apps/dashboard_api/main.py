@@ -17,6 +17,7 @@ import psutil
 from pydantic import BaseModel
 
 from scrapers.common.error_classifier import classify_error
+from scrapers.common.notifier import notify_chatwork
 
 app = FastAPI(title="Supplier Scraper Dashboard API")
 
@@ -26,6 +27,8 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY
 ITEMS_TABLE = os.getenv("ITEMS_TABLE", "items")
 RUNS_TABLE = os.getenv("RUNS_TABLE", "scrape_runs")
 RUN_STEPS_TABLE = os.getenv("RUN_STEPS_TABLE", "scrape_run_steps")
+SITE_HEALTH_TABLE = os.getenv("SITE_HEALTH_TABLE", "site_health")
+INTEGRITY_INCIDENTS_TABLE = os.getenv("INTEGRITY_INCIDENTS_TABLE", "integrity_incidents")
 VALIDATOR_LOG_PATH = os.getenv("VALIDATOR_LOG_PATH", "/var/log/validator_agent.log")
 MERCARI_EXTRACT_SCRIPT = os.getenv(
     "MERCARI_EXTRACT_SCRIPT",
@@ -93,6 +96,8 @@ RUN_STEPS_PAGE_SIZE = int(os.getenv("RUN_STEPS_PAGE_SIZE", "1000"))
 _API_CACHE: dict[str, dict[str, Any]] = {}
 MCP_DEFAULT_INTERVAL_MIN = int(os.getenv("MCP_DEFAULT_INTERVAL_MIN", "720"))
 MCP_ORCHESTRATOR_TICK_MIN = int(os.getenv("MCP_ORCHESTRATOR_TICK_MIN", "10"))
+DASHBOARD_ALERT_STATE_PATH = os.getenv("DASHBOARD_ALERT_STATE_PATH", "/tmp/dashboard_api_alert_state.json")
+DASHBOARD_ALERT_COOLDOWN_SECONDS = int(os.getenv("DASHBOARD_ALERT_COOLDOWN_SECONDS", "900"))
 
 SITE_INTERVAL_MINUTES: dict[str, int] = {
     "mercari": int(os.getenv("MCP_INTERVAL_MERCARI_MIN", str(MCP_DEFAULT_INTERVAL_MIN))),
@@ -104,6 +109,169 @@ SITE_INTERVAL_MINUTES: dict[str, int] = {
     "yahoofleama": int(os.getenv("MCP_INTERVAL_YAHOOFLEAMA_MIN", str(MCP_DEFAULT_INTERVAL_MIN))),
     "secondstreet": int(os.getenv("MCP_INTERVAL_SECONDSTREET_MIN", str(MCP_DEFAULT_INTERVAL_MIN))),
 }
+
+
+def _fallback_overview(error_code: str, message: str) -> dict[str, Any]:
+    return {
+        "today_runs": 0,
+        "today_failures": 0,
+        "sites": [],
+        "status": "degraded",
+        "error": error_code,
+        "message": message,
+    }
+
+
+def _fallback_capacity(error_code: str, message: str) -> dict[str, Any]:
+    return {
+        "snapshot_at": None,
+        "system": {
+            "cpu_percent": 0,
+            "load_average": [0.0, 0.0, 0.0],
+            "memory_percent": 0,
+            "swap_percent": 0,
+            "disk_free_gb": 0,
+        },
+        "runtime": {
+            "running_sites": 0,
+            "running_runs": 0,
+            "stalled_runs": 0,
+            "chrome_processes": 0,
+            "runner_processes": 0,
+        },
+        "quality": {
+            "success_runs_1h": 0,
+            "failed_runs_1h": 0,
+            "retry_runs_1h": 0,
+            "db_timeout_1h": 0,
+            "stale_running_1h": 0,
+            "run_success_rate_24h": 0.0,
+        },
+        "throughput": {
+            "items_per_minute_running": 0.0,
+            "avg_run_minutes_by_site": {},
+        },
+        "capacity_hint": {
+            "parallel_level": "ng",
+            "reasons": [error_code],
+        },
+        "status": "degraded",
+        "error": error_code,
+        "message": message,
+    }
+
+
+def _fallback_mcp_summary(error_code: str, message: str) -> dict[str, Any]:
+    return {
+        "kpis": {
+            "success_24h": 0,
+            "failed_24h": 0,
+            "running_runs": 0,
+            "sites_tracked": 0,
+        },
+        "latest_by_site": [],
+        "top_errors": [],
+        "server": {
+            "cpu_percent": 0,
+            "memory_percent": 0,
+            "chrome_processes": 0,
+            "runner_processes": 0,
+        },
+        "site_health": {
+            "total": 0,
+            "running": 0,
+            "degraded": 0,
+            "hung": 0,
+            "blocked": 0,
+            "unhealthy_rows": [],
+        },
+        "integrity_incidents": {
+            "open_total": 0,
+            "missing_stocking_url": 0,
+            "invalid_stocking_domain": 0,
+            "sheet_parser_reject": 0,
+            "sheet_items_diff": 0,
+            "sync_upsert_failure": 0,
+            "top_reasons": [],
+            "top_scopes": [],
+        },
+        "status": "degraded",
+        "error": error_code,
+        "message": message,
+    }
+
+
+def _fallback_validator_summary(error_code: str, message: str) -> dict[str, Any]:
+    return {
+        "checked_at": None,
+        "failed_recent": 0,
+        "retried_count": 0,
+        "skipped_count": 0,
+        "retried": [],
+        "skipped": [],
+        "ai_notification": None,
+        "status": "degraded",
+        "error": error_code,
+        "message": message,
+    }
+
+
+def _load_dashboard_alert_state() -> dict[str, Any]:
+    try:
+        if not os.path.exists(DASHBOARD_ALERT_STATE_PATH):
+            return {}
+        with open(DASHBOARD_ALERT_STATE_PATH, "r", encoding="utf-8") as fp:
+            data = json.load(fp)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_dashboard_alert_state(state: dict[str, Any]) -> None:
+    try:
+        with open(DASHBOARD_ALERT_STATE_PATH, "w", encoding="utf-8") as fp:
+            json.dump(state, fp, ensure_ascii=False, indent=2)
+    except Exception:
+        return
+
+
+def _maybe_notify_dashboard_supabase_failure(endpoint: str, exc: Exception) -> None:
+    message = str(exc)
+    error_type = classify_error(message)
+    if error_type not in {"db_timeout", "network", "timeout"}:
+        return
+
+    key = f"{endpoint}:{error_type}:{message[:200]}"
+    state = _load_dashboard_alert_state()
+    now_ts = int(time.time())
+    last_sent = int(state.get(key, 0) or 0)
+    if now_ts - last_sent < max(DASHBOARD_ALERT_COOLDOWN_SECONDS, 1):
+        return
+
+    notify_chatwork(
+        "\n".join(
+            [
+                "[AI] Dashboard API degraded (Supabase reachability)",
+                f"endpoint: {endpoint}",
+                f"error_type: {error_type}",
+                f"message: {message[:1000]}",
+            ]
+        )
+    )
+    state[key] = now_ts
+    _save_dashboard_alert_state(state)
+
+
+def _dashboard_degraded_response(
+    *,
+    endpoint: str,
+    error_code: str,
+    exc: Exception,
+    fallback_builder,
+) -> JSONResponse:
+    _maybe_notify_dashboard_supabase_failure(endpoint, exc)
+    payload = fallback_builder(error_code, str(exc))
+    return JSONResponse(status_code=200, content=payload)
 
 
 def _cache_get(key: str) -> Any | None:
@@ -237,6 +405,47 @@ def _fetch_runs(limit: int = 200) -> list[dict[str, Any]]:
     return data if isinstance(data, list) else []
 
 
+def _fetch_site_health(limit: int = 200) -> list[dict[str, Any]]:
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return []
+    url = f"{SUPABASE_URL}/rest/v1/{SITE_HEALTH_TABLE}"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+    }
+    params = {
+        "select": "subsystem,scope_type,scope_key,state,status_reason,last_started_at,last_success_at,last_error_at,last_error_type,block_until,updated_at,metadata",
+        "limit": str(limit),
+        "order": "updated_at.desc",
+    }
+    res = requests.get(url, headers=headers, params=params, timeout=30)
+    if res.status_code >= 400:
+        return []
+    data = res.json()
+    return data if isinstance(data, list) else []
+
+
+def _fetch_open_integrity_incidents(limit: int = 200) -> list[dict[str, Any]]:
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return []
+    url = f"{SUPABASE_URL}/rest/v1/{INTEGRITY_INCIDENTS_TABLE}"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+    }
+    params = {
+        "select": "incident_type,subsystem,scope_type,scope_key,severity,status,reason,detected_at,updated_at",
+        "status": "eq.open",
+        "limit": str(limit),
+        "order": "detected_at.desc",
+    }
+    res = requests.get(url, headers=headers, params=params, timeout=30)
+    if res.status_code >= 400:
+        return []
+    data = res.json()
+    return data if isinstance(data, list) else []
+
+
 def _fetch_run_steps(run_id: str, limit: int = 20000) -> list[dict[str, Any]]:
     if not SUPABASE_URL or not SUPABASE_KEY or not run_id:
         return []
@@ -269,6 +478,30 @@ def _fetch_run_steps(run_id: str, limit: int = 20000) -> list[dict[str, Any]]:
     return fetched
 
 
+def _fetch_latest_run_step(run_id: str) -> dict[str, Any] | None:
+    if not SUPABASE_URL or not SUPABASE_KEY or not run_id:
+        return None
+    url = f"{SUPABASE_URL}/rest/v1/{RUN_STEPS_TABLE}"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+    }
+    params = {
+        "select": "id,run_id,step_name,status,started_at,finished_at,message,updated_at",
+        "run_id": f"eq.{run_id}",
+        "order": "updated_at.desc",
+        "limit": "1",
+    }
+    res = requests.get(url, headers=headers, params=params, timeout=30)
+    if res.status_code >= 400:
+        return None
+    data = res.json()
+    if not isinstance(data, list) or not data:
+        return None
+    row = data[0]
+    return row if isinstance(row, dict) else None
+
+
 def _site_interval_minutes(site: str) -> int:
     return SITE_INTERVAL_MINUTES.get(site, MCP_DEFAULT_INTERVAL_MIN)
 
@@ -294,6 +527,7 @@ def _extract_total_items_from_steps(steps: list[dict[str, Any]]) -> int | None:
 def _summarize_run_steps(run: dict[str, Any]) -> dict[str, Any]:
     run_id = run.get("id")
     steps = _fetch_run_steps(run_id) if run_id else []
+    latest_step = _fetch_latest_run_step(run_id) if run_id else None
     total_items = _extract_total_items_from_steps(steps)
     check_steps = [s for s in steps if str(s.get("step_name") or "").startswith("check:")]
     success_steps = [s for s in check_steps if s.get("status") == "success"]
@@ -305,6 +539,11 @@ def _summarize_run_steps(run: dict[str, Any]) -> dict[str, Any]:
     last_step_at: datetime | None = None
     for step in steps:
         for raw in (step.get("updated_at"), step.get("finished_at"), step.get("started_at")):
+            dt = _parse_ts(raw)
+            if dt and (last_step_at is None or dt > last_step_at):
+                last_step_at = dt
+    if latest_step:
+        for raw in (latest_step.get("updated_at"), latest_step.get("finished_at"), latest_step.get("started_at")):
             dt = _parse_ts(raw)
             if dt and (last_step_at is None or dt > last_step_at):
                 last_step_at = dt
@@ -1445,12 +1684,11 @@ def overview() -> dict:
 
         return _cached("overview", CACHE_TTL_OVERVIEW, build)
     except Exception as exc:  # noqa: BLE001
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": "overview_fetch_failed",
-                "message": str(exc),
-            },
+        return _dashboard_degraded_response(
+            endpoint="overview",
+            error_code="overview_fetch_failed",
+            exc=exc,
+            fallback_builder=_fallback_overview,
         )
 
 
@@ -1620,7 +1858,18 @@ def system_schedule() -> dict:
 
         return _cached("system_schedule", CACHE_TTL_SCHEDULE, build)
     except Exception as exc:  # noqa: BLE001
-        return JSONResponse(status_code=500, content={"error": "schedule_fetch_failed", "message": str(exc)})
+        return _dashboard_degraded_response(
+            endpoint="system_schedule",
+            error_code="schedule_fetch_failed",
+            exc=exc,
+            fallback_builder=lambda error_code, message: {
+                "timezone": "Asia/Tokyo",
+                "items": [],
+                "status": "degraded",
+                "error": error_code,
+                "message": message,
+            },
+        )
 
 
 @app.get("/api/capacity")
@@ -1628,7 +1877,12 @@ def capacity_summary() -> dict:
     try:
         return _cached("capacity_summary", CACHE_TTL_CAPACITY, _build_capacity_summary)
     except Exception as exc:  # noqa: BLE001
-        return JSONResponse(status_code=500, content={"error": "capacity_summary_failed", "message": str(exc)})
+        return _dashboard_degraded_response(
+            endpoint="capacity_summary",
+            error_code="capacity_summary_failed",
+            exc=exc,
+            fallback_builder=_fallback_capacity,
+        )
 
 
 @app.get("/api/mcp/summary")
@@ -1636,6 +1890,8 @@ def mcp_summary() -> dict:
     try:
         def build() -> dict:
             runs_data = _fetch_runs(limit=500)
+            site_health_rows = _fetch_site_health(limit=200)
+            integrity_rows = _fetch_open_integrity_incidents(limit=200)
             now_utc = datetime.now(timezone.utc)
             since_24h = now_utc - timedelta(hours=24)
             success_24h = 0
@@ -1736,6 +1992,21 @@ def mcp_summary() -> dict:
 
             proc = _process_counts()
             vm = psutil.virtual_memory()
+            health_counts = Counter((row.get("state") or "unknown") for row in site_health_rows)
+            open_integrity_counts = Counter((row.get("incident_type") or "unknown") for row in integrity_rows)
+            unhealthy_site_health = [
+                row
+                for row in site_health_rows
+                if (row.get("state") or "") in {"degraded", "hung", "blocked"}
+            ][:10]
+            top_integrity_reasons = Counter(
+                f"{row.get('incident_type') or 'unknown'}:{row.get('reason') or 'unknown'}"
+                for row in integrity_rows
+            )
+            top_integrity_scopes = Counter(
+                f"{row.get('scope_type') or 'unknown'}:{row.get('scope_key') or 'unknown'}"
+                for row in integrity_rows
+            )
             return {
                 "kpis": {
                     "success_24h": success_24h,
@@ -1759,25 +2030,55 @@ def mcp_summary() -> dict:
                     "chrome_processes": proc["chrome_processes"],
                     "runner_processes": proc["runner_processes"],
                 },
+                "site_health": {
+                    "total": len(site_health_rows),
+                    "running": health_counts.get("running", 0),
+                    "degraded": health_counts.get("degraded", 0),
+                    "hung": health_counts.get("hung", 0),
+                    "blocked": health_counts.get("blocked", 0),
+                    "unhealthy_rows": unhealthy_site_health,
+                },
+                "integrity_incidents": {
+                    "open_total": len(integrity_rows),
+                    "missing_stocking_url": open_integrity_counts.get("missing_stocking_url", 0),
+                    "invalid_stocking_domain": open_integrity_counts.get("invalid_stocking_domain", 0),
+                    "sheet_parser_reject": open_integrity_counts.get("sheet_parser_reject", 0),
+                    "sheet_items_diff": open_integrity_counts.get("sheet_items_diff", 0),
+                    "sync_upsert_failure": open_integrity_counts.get("sync_upsert_failure", 0),
+                    "top_reasons": [
+                        {
+                            "key": key,
+                            "incident_type": key.split(":", 1)[0] if ":" in key else key,
+                            "reason": key.split(":", 1)[1] if ":" in key else "unknown",
+                            "count": count,
+                        }
+                        for key, count in top_integrity_reasons.most_common(5)
+                    ],
+                    "top_scopes": [
+                        {
+                            "key": key,
+                            "scope_type": key.split(":", 1)[0] if ":" in key else key,
+                            "scope_key": key.split(":", 1)[1] if ":" in key else "unknown",
+                            "count": count,
+                        }
+                        for key, count in top_integrity_scopes.most_common(5)
+                    ],
+                },
             }
 
         return _cached("mcp_summary", CACHE_TTL_MCP_SUMMARY, build)
     except Exception as exc:  # noqa: BLE001
-        return JSONResponse(status_code=500, content={"error": "mcp_summary_failed", "message": str(exc)})
+        return _dashboard_degraded_response(
+            endpoint="mcp_summary",
+            error_code="mcp_summary_failed",
+            exc=exc,
+            fallback_builder=_fallback_mcp_summary,
+        )
 
 
 @app.get("/api/validator/summary")
 def validator_summary() -> dict:
-    fallback = {
-        "checked_at": None,
-        "failed_recent": 0,
-        "retried_count": 0,
-        "skipped_count": 0,
-        "retried": [],
-        "skipped": [],
-        "ai_notification": None,
-        "status": "unknown",
-    }
+    fallback = _fallback_validator_summary("validator_summary_unavailable", "validator log unavailable")
     try:
         def build() -> dict:
             if not os.path.exists(VALIDATOR_LOG_PATH):
@@ -1812,4 +2113,9 @@ def validator_summary() -> dict:
 
         return _cached("validator_summary", CACHE_TTL_VALIDATOR, build)
     except Exception as exc:  # noqa: BLE001
-        return JSONResponse(status_code=500, content={"error": "validator_summary_failed", "message": str(exc)})
+        return _dashboard_degraded_response(
+            endpoint="validator_summary",
+            error_code="validator_summary_failed",
+            exc=exc,
+            fallback_builder=_fallback_validator_summary,
+        )
