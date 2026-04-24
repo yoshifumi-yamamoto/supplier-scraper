@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import os
 from difflib import SequenceMatcher
 from typing import Any
 from urllib.parse import urlparse
@@ -25,6 +26,7 @@ RAKUTEN_CONFIRMED_PREFIX = "rakuten:"
 RAKUTEN_PENDING_PREFIX = "rakuten-pending:"
 MODEL_RE = re.compile(r"\b[a-z0-9]+(?:[-_][a-z0-9]+)+\b", re.IGNORECASE)
 ALNUM_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
+DISCOVERY_LIMIT = max(int(os.getenv("RAKUTEN_DISCOVERY_LIMIT", "30")), 0)
 
 
 def _normalize_text(text: str | None) -> str:
@@ -269,6 +271,8 @@ def run_pipeline(run_id: str) -> dict[str, Any]:
     out_of_stock = 0
     unknown = 0
     pending_updates: list[dict[str, Any]] = []
+    discovery_attempts = 0
+    discovery_skipped = 0
     for row in items:
         ebay_item_id = row.get("ebay_item_id")
         if not ebay_item_id:
@@ -299,7 +303,13 @@ def run_pipeline(run_id: str) -> dict[str, Any]:
                     status = ScrapeStatus.UNKNOWN
                     message = "rakuten shopCode could not be resolved from stocking_url"
                     next_sku = row.get("sku")
+                elif DISCOVERY_LIMIT and discovery_attempts >= DISCOVERY_LIMIT:
+                    status = ScrapeStatus.UNKNOWN
+                    message = "rakuten discovery deferred by run limit"
+                    next_sku = row.get("sku")
+                    discovery_skipped += 1
                 else:
+                    discovery_attempts += 1
                     candidate, confidence, reasons, _ = _discover_item(
                         shop_code=shop_code,
                         local_code_hint=local_code_hint,
@@ -385,6 +395,6 @@ def run_pipeline(run_id: str) -> dict[str, Any]:
         "run_id": run_id,
         "site": "rakuten",
         "status": "success",
-        "message": f"rakuten api pipeline completed: checked={processed} in={in_stock} out={out_of_stock} unknown={unknown}",
+        "message": f"rakuten api pipeline completed: checked={processed} in={in_stock} out={out_of_stock} unknown={unknown} discovery_attempts={discovery_attempts} discovery_skipped={discovery_skipped}",
         "source": "api",
     }

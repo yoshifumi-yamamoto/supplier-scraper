@@ -14,8 +14,20 @@
 2. 初回 discovery は `shopCode + keyword` 検索で候補を出し、型番一致を最優先に価格差・タイトル類似度・画像一致で confidence 判定する
 3. high confidence のみ API 返却 `itemCode` を正式IDとして保存する
 4. low confidence 候補は `pending` として保存し、在庫監視対象に入れない
-3. `scrape_runs / scrape_run_steps` の本番 run を確認する
-4. ダッシュボードで `source=api` の表示を確認する
+5. `scrape_runs / scrape_run_steps` の本番 run を確認する
+6. ダッシュボードで `source=api` の表示を確認する
+
+## 2026-04-24 時点の追加方針
+- 認証と許可 IP の疎通は確認済み
+- `rakuten` run 自体も success している
+- 現在の主要ボトルネックは
+  - `429 Rate limit is exceeded`
+  - `keyword is not valid`
+- そのため、初回 discovery は通常監視と分けて扱う
+  - 保存済み `itemCode` の再照会を優先する
+  - 初回 discovery は 1 run ごとに上限件数を設ける
+  - `RAKUTEN_DISCOVERY_LIMIT` の既定は `30`
+  - discovery を超えた item は次回 run へ defer する
 
 ## 現在の env 契約
 - `RAKUTEN_APPLICATION_ID`
