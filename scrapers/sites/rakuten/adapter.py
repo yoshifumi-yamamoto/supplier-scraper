@@ -108,6 +108,7 @@ def _score_candidate(
     models: list[str],
     row_title: str,
     row_image_url: str | None,
+    local_code_hint: str | None = None,
 ) -> tuple[float, list[str]]:
     reasons: list[str] = []
     score = 0.0
@@ -120,6 +121,19 @@ def _score_candidate(
 
     candidate_title = _normalize_text(candidate.get("itemName") or candidate.get("itemCaption"))
     candidate_item_code = _normalize_text(candidate.get("itemCode"))
+    candidate_caption = _normalize_text(candidate.get("itemCaption"))
+    candidate_url = _normalize_text(candidate.get("itemUrl"))
+
+    local_code = _normalize_text(local_code_hint)
+    if local_code and (
+        local_code in candidate_title
+        or local_code in candidate_caption
+        or local_code in candidate_item_code
+        or local_code in candidate_url
+    ):
+        score += 0.35
+        reasons.append(f"local_code_match:{local_code}")
+
     model_exact = False
     for model in models:
         if model and (model in candidate_title or model in candidate_item_code):
@@ -200,6 +214,7 @@ def _discover_item(
                 models=models,
                 row_title=row_title,
                 row_image_url=row_image_url,
+                local_code_hint=local_code_hint,
             )
             if score > best_score:
                 best_candidate = candidate
