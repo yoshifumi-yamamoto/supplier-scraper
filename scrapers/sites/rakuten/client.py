@@ -1,4 +1,5 @@
 import os
+import re
 import time
 from typing import Any, Optional
 
@@ -19,6 +20,38 @@ _LAST_REQUEST_AT = 0.0
 
 class RakutenApiError(RuntimeError):
     pass
+
+
+def _html_title(html: str) -> str | None:
+    patterns = [
+        r'property="og:title"\s+content="([^"]+)"',
+        r"<title>(.*?)</title>",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, html, re.IGNORECASE | re.DOTALL)
+        if match:
+            title = re.sub(r"\s+", " ", match.group(1)).strip()
+            if title:
+                return title
+    return None
+
+
+def _html_models(html: str) -> list[str]:
+    patterns = [
+        r'itemprop="sku"\s+content="([^"]+)"',
+        r"商品コード[:：\s]*([A-Za-z0-9\-_]+)",
+        r"型番[:：\s]*([A-Za-z0-9\-_]+)",
+        r"JAN[:：\s]*([0-9]{8,14})",
+    ]
+    models: list[str] = []
+    for pattern in patterns:
+        for match in re.findall(pattern, html, re.IGNORECASE):
+            value = re.sub(r"\s+", "", match).strip()
+            if len(value) < 4:
+                continue
+            if value not in models:
+                models.append(value)
+    return models
 
 
 def auth_ready() -> bool:
@@ -65,6 +98,20 @@ def _request(params: dict[str, Any]) -> dict[str, Any]:
             raise RakutenApiError(f"rakuten api error {response.status_code}: {preview}")
         return response.json()
     raise RakutenApiError(last_error or "rakuten api error 429")
+
+
+def fetch_page_hints(stocking_url: str) -> dict[str, Any]:
+    response = requests.get(
+        stocking_url,
+        timeout=20,
+        headers={"User-Agent": "Mozilla/5.0"},
+    )
+    response.raise_for_status()
+    html = response.text
+    return {
+        "page_title": _html_title(html),
+        "page_models": _html_models(html),
+    }
 
 
 def fetch_item_by_code(item_code: str, *, shop_code: Optional[str] = None) -> Optional[dict[str, Any]]:

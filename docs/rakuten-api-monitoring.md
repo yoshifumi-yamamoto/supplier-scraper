@@ -23,11 +23,18 @@
 - 現在の主要ボトルネックは
   - `429 Rate limit is exceeded`
   - `keyword is not valid`
+- さらに、eBay タイトルを discovery 入力に使う方針は不適切と判断した
+- 初回 discovery は Rakuten 商品ページ HTML から
+  - 日本語タイトル
+  - 型番候補
+  - SKU / 商品コード / JAN 候補
+  を抽出して API 検索へ渡す
 - そのため、初回 discovery は通常監視と分けて扱う
   - 保存済み `itemCode` の再照会を優先する
   - 初回 discovery は 1 run ごとに上限件数を設ける
   - `RAKUTEN_DISCOVERY_LIMIT` の既定は `30`
   - discovery を超えた item は次回 run へ defer する
+- 価格差は eBay 側ドル価格と楽天側円価格で直接比較できないため、discovery の主要スコアから外す
 
 ## 現在の env 契約
 - `RAKUTEN_APPLICATION_ID`

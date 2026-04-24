@@ -10,7 +10,13 @@ from scrapers.common.items import fetch_active_items_by_domain, update_item_stoc
 from scrapers.common.logging_utils import json_log
 from scrapers.common.models import ScrapeStatus
 from scrapers.common.run_store import finish_step, start_step
-from scrapers.sites.rakuten.client import RakutenApiError, auth_ready, fetch_item_by_code, search_items
+from scrapers.sites.rakuten.client import (
+    RakutenApiError,
+    auth_ready,
+    fetch_item_by_code,
+    fetch_page_hints,
+    search_items,
+)
 from scrapers.sites.rakuten.normalizer import normalize_item
 
 
@@ -101,7 +107,6 @@ def _score_candidate(
     shop_code: str,
     models: list[str],
     row_title: str,
-    row_price: Any,
     row_image_url: str | None,
 ) -> tuple[float, list[str]]:
     reasons: list[str] = []
@@ -131,21 +136,6 @@ def _score_candidate(
         score += 0.1
         reasons.append(f"title_sim_weak:{title_ratio:.2f}")
 
-    try:
-        base_price = float(row_price) if row_price is not None else None
-        candidate_price = float(candidate.get("itemPrice")) if candidate.get("itemPrice") is not None else None
-    except (TypeError, ValueError):
-        base_price = None
-        candidate_price = None
-    if base_price and candidate_price:
-        delta = abs(candidate_price - base_price) / max(base_price, 1.0)
-        if delta <= 0.05:
-            score += 0.1
-            reasons.append(f"price_close:{delta:.2f}")
-        elif delta <= 0.15:
-            score += 0.05
-            reasons.append(f"price_near:{delta:.2f}")
-
     if _candidate_image_match(row_image_url, candidate):
         score += 0.15
         reasons.append("image_match")
@@ -156,9 +146,9 @@ def _score_candidate(
     return min(score, 1.0), reasons
 
 
-def _build_search_keywords(*, title: str, local_code_hint: str | None) -> list[str]:
+def _build_search_keywords(*, title: str, local_code_hint: str | None, page_models: list[str] | None = None) -> list[str]:
     keywords: list[str] = []
-    models = _extract_models(local_code_hint, title)
+    models = _extract_models(local_code_hint, title, *(page_models or []))
     for model in models[:3]:
         normalized_model = model.replace("_", "-").strip("- ")
         if len(normalized_model) >= 5 and not normalized_model.isdigit():
@@ -193,15 +183,15 @@ def _discover_item(
     shop_code: str,
     local_code_hint: str | None,
     row_title: str,
-    row_price: Any,
     row_image_url: str | None,
+    page_models: list[str] | None = None,
 ) -> tuple[dict[str, Any] | None, float, list[str], str | None]:
     best_candidate: dict[str, Any] | None = None
     best_score = 0.0
     best_reasons: list[str] = []
     best_keyword: str | None = None
-    models = _extract_models(local_code_hint, row_title)
-    for keyword in _build_search_keywords(title=row_title, local_code_hint=local_code_hint):
+    models = _extract_models(local_code_hint, row_title, *(page_models or []))
+    for keyword in _build_search_keywords(title=row_title, local_code_hint=local_code_hint, page_models=page_models):
         candidates = search_items(keyword=keyword, shop_code=shop_code, hits=10)
         for candidate in candidates:
             score, reasons = _score_candidate(
@@ -209,7 +199,6 @@ def _discover_item(
                 shop_code=shop_code,
                 models=models,
                 row_title=row_title,
-                row_price=row_price,
                 row_image_url=row_image_url,
             )
             if score > best_score:
@@ -296,7 +285,6 @@ def run_pipeline(run_id: str) -> dict[str, Any]:
                 next_sku = row.get("sku")
             else:
                 row_title = row.get("title") or ""
-                row_price = row.get("price")
                 row_image_url = row.get("image_url")
                 local_code_hint = item_code
                 if not shop_code:
@@ -310,12 +298,15 @@ def run_pipeline(run_id: str) -> dict[str, Any]:
                     discovery_skipped += 1
                 else:
                     discovery_attempts += 1
+                    page_hints = fetch_page_hints(stocking_url)
+                    page_title = page_hints.get("page_title") or row_title
+                    page_models = page_hints.get("page_models") or []
                     candidate, confidence, reasons, _ = _discover_item(
                         shop_code=shop_code,
                         local_code_hint=local_code_hint,
-                        row_title=row_title,
-                        row_price=row_price,
+                        row_title=page_title,
                         row_image_url=row_image_url,
+                        page_models=page_models,
                     )
                     if candidate and confidence >= 0.85 and candidate.get("itemCode"):
                         item_code = str(candidate["itemCode"])

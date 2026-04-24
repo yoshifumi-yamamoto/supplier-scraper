@@ -1,6 +1,6 @@
 # API 在庫監視設計
 
-更新日: 2026-04-03
+更新日: 2026-04-24
 
 ## 1. 目的
 - `楽天市場`
@@ -55,19 +55,22 @@
 
 ### 5.1 楽天市場
 - 方針:
-  - 公式 API ベースで在庫監視
+  - 通常監視は公式 API ベース
+  - 初回 discovery は商品ページ HTML と API の hybrid で行う
   - 既存 `baysync-rakuten-stock-scraper` は段階的に廃止
 - 前提:
   - Rakuten Web Service の `楽天市場API` を利用する
   - URL 監視より `itemCode` 監視を優先する
-  - `item.rakuten.co.jp/<shop>/<item>/` または `www.rakuten.co.jp/<shop>/<item>/` から `shop:item` を解決する
+  - ただし URL 末尾コードや HTML `sku` を API の正式 `itemCode` とみなさない
+  - 初回は商品ページ HTML から日本語タイトル / 型番 / JAN / 商品コード候補を抽出し、その情報で API 検索して正式 `itemCode` を確定する
 - 実装メモ:
   - `scrapers/sites/rakuten/client.py`
   - `scrapers/sites/rakuten/normalizer.py`
   - `scrapers/sites/rakuten/adapter.py`
 - 懸念:
-  - 商品 URL しか持っていない item をどう `item code` に解決するか
+  - 商品 URL しか持っていない item をどう正式 `itemCode` に解決するか
   - バリエーション在庫の扱い
+  - 初回 discovery の rate limit と confidence 設計
 
 ### 5.2 Yahoo!ショッピング
 - 方針:
@@ -106,6 +109,7 @@
   - 認証
   - API 呼び出し
   - レート制限 / retry
+  - 必要に応じて商品ページ HTML 取得
 - `normalizer.py`
   - site 固有レスポンスから共通 stock payload へ変換
 - `adapter.py`
@@ -192,5 +196,7 @@ Selenium サイトと同じ progress 計算に乗せる。
 
 ## 12. 直近アクション
 1. `rakuten` の認証方式と item 主キーを確定
+   - 2026-04-24 時点で、認証 / 許可 IP は確認済み
+   - 次の主対象は HTML + API hybrid discovery の精度改善
 2. `Yahoo!ショッピング` の item 識別子を URL から解決できるか確認
 3. `Amazon` は利用可能 API と認証保有状況を確認してから着手
