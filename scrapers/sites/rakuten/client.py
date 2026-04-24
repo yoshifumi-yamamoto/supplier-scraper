@@ -79,6 +79,8 @@ def _unwrap_items(body: dict[str, Any]) -> list[dict[str, Any]]:
     for item in items:
         if isinstance(item, dict) and "item" in item and isinstance(item["item"], dict):
             unwrapped.append(item["item"])
+        elif isinstance(item, dict) and "Item" in item and isinstance(item["Item"], dict):
+            unwrapped.append(item["Item"])
         elif isinstance(item, dict):
             unwrapped.append(item)
     return unwrapped
