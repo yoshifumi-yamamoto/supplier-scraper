@@ -12,6 +12,7 @@ from scrapers.common.models import ScrapeStatus
 from scrapers.common.run_store import finish_step, start_step
 from scrapers.sites.rakuten.client import (
     RakutenApiError,
+    RakutenPageNotFoundError,
     auth_ready,
     fetch_item_by_code,
     fetch_page_hints,
@@ -313,7 +314,36 @@ def run_pipeline(run_id: str) -> dict[str, Any]:
                     discovery_skipped += 1
                 else:
                     discovery_attempts += 1
-                    page_hints = fetch_page_hints(stocking_url)
+                    try:
+                        page_hints = fetch_page_hints(stocking_url)
+                    except RakutenPageNotFoundError:
+                        status = ScrapeStatus.OUT_OF_STOCK
+                        message = "rakuten page returned 404"
+                        next_sku = row.get("sku")
+                        pending_updates.append(
+                            {
+                                "ebay_item_id": ebay_item_id,
+                                "scraped_stock_status": STATUS_MAP[status],
+                                "is_scraped": True,
+                                "sku": next_sku,
+                            }
+                        )
+                        _log_item_result(
+                            run_id=run_id,
+                            ebay_item_id=str(ebay_item_id),
+                            stocking_url=stocking_url,
+                            shop_code=shop_code,
+                            item_code=item_code,
+                            status=status,
+                            message=message,
+                        )
+                        out_of_stock += 1
+                        finish_step(step_id, status="success", message=message)
+                        processed += 1
+                        if len(pending_updates) >= 20:
+                            update_item_stock_bulk(pending_updates)
+                            pending_updates = []
+                        continue
                     page_title = page_hints.get("page_title") or row_title
                     page_models = page_hints.get("page_models") or []
                     candidate, confidence, reasons, _ = _discover_item(

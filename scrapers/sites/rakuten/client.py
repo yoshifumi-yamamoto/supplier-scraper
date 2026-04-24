@@ -22,6 +22,10 @@ class RakutenApiError(RuntimeError):
     pass
 
 
+class RakutenPageNotFoundError(RuntimeError):
+    pass
+
+
 def _html_title(html: str) -> str | None:
     patterns = [
         r'property="og:title"\s+content="([^"]+)"',
@@ -106,6 +110,8 @@ def fetch_page_hints(stocking_url: str) -> dict[str, Any]:
         timeout=20,
         headers={"User-Agent": "Mozilla/5.0"},
     )
+    if response.status_code == 404:
+        raise RakutenPageNotFoundError(f"rakuten page not found: {stocking_url}")
     response.raise_for_status()
     html = response.text
     return {

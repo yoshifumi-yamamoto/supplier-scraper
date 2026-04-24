@@ -34,6 +34,7 @@
   - 初回 discovery は 1 run ごとに上限件数を設ける
   - `RAKUTEN_DISCOVERY_LIMIT` の既定は `30`
   - discovery を超えた item は次回 run へ defer する
+- 商品ページ HTML が `404` の場合は、楽天上で商品ページ自体が消えているとみなし `在庫なし` に倒す
 - 価格差は eBay 側ドル価格と楽天側円価格で直接比較できないため、discovery の主要スコアから外す
 
 ## 現在の env 契約
