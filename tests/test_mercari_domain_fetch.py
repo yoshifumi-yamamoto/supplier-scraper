@@ -42,10 +42,23 @@ class FetchParamsTests(unittest.TestCase):
             size=50,
             last_item_id=None,
             use_stocking_domain=True,
+            status_mode="active",
         )
 
         self.assertEqual(params["stocking_domain"], "in.(mercari.com,jp.mercari.com)")
-        self.assertEqual(params["or"], "(listing_status.eq.Active,listing_state.eq.ACTIVE)")
+        self.assertEqual(params["listing_status"], "eq.Active")
+
+    def test_build_fetch_params_uses_listing_state_only_for_partial_rows(self) -> None:
+        params = items._build_fetch_params(
+            ["mercari.com"],
+            size=50,
+            last_item_id=None,
+            use_stocking_domain=True,
+            status_mode="listing_state_only",
+        )
+
+        self.assertEqual(params["listing_state"], "eq.ACTIVE")
+        self.assertEqual(params["listing_status"], "is.null")
 
     def test_build_fetch_params_uses_ilike_any_fallback_for_multiple_domains(self) -> None:
         params = items._build_fetch_params(
@@ -53,6 +66,7 @@ class FetchParamsTests(unittest.TestCase):
             size=50,
             last_item_id=None,
             use_stocking_domain=False,
+            status_mode="active",
         )
 
         self.assertEqual(

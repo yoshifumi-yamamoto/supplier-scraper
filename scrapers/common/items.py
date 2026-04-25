@@ -51,13 +51,26 @@ def _normalize_stocking_domains(domains: Union[str, Iterable[str]]) -> list[str]
     return normalized
 
 
-def _build_fetch_params(domains: list[str], size: int, last_item_id: Union[str, None], *, use_stocking_domain: bool) -> dict[str, str]:
+def _build_fetch_params(
+    domains: list[str],
+    size: int,
+    last_item_id: Union[str, None],
+    *,
+    use_stocking_domain: bool,
+    status_mode: str = "active",
+) -> dict[str, str]:
     params = {
         "select": "ebay_item_id,ebay_user_id,stocking_url,listing_status,listing_state,stocking_domain,sku,title,price,image_url",
-        "or": "(listing_status.eq.Active,listing_state.eq.ACTIVE)",
         "order": "ebay_item_id.asc",
         "limit": str(size),
     }
+    if status_mode == "active":
+        params["listing_status"] = "eq.Active"
+    elif status_mode == "listing_state_only":
+        params["listing_state"] = "eq.ACTIVE"
+        params["listing_status"] = "is.null"
+    else:
+        raise ValueError(f"unsupported status_mode: {status_mode}")
     domain_patterns = ",".join(f"*{domain}*" for domain in domains)
     if use_stocking_domain:
         if len(domains) == 1:
@@ -95,6 +108,7 @@ def _fetch_domain_rows(
     size: int,
     use_stocking_domain: bool,
     max_items: Optional[int] = None,
+    status_mode: str = "active",
 ) -> tuple[list[dict[str, Any]], int, bool]:
     all_rows: list[dict[str, Any]] = []
     last_item_id = None
@@ -102,7 +116,13 @@ def _fetch_domain_rows(
     fallback_used = False
     current_size = size
     while True:
-        params = _build_fetch_params(domains, current_size, last_item_id, use_stocking_domain=use_stocking_domain)
+        params = _build_fetch_params(
+            domains,
+            current_size,
+            last_item_id,
+            use_stocking_domain=use_stocking_domain,
+            status_mode=status_mode,
+        )
         data = None
         for attempt in range(FETCH_MAX_RETRIES):
             try:
@@ -131,7 +151,13 @@ def _fetch_domain_rows(
                             error=str(exc)[:300],
                         )
                     current_size = next_size
-                    params = _build_fetch_params(domains, current_size, last_item_id, use_stocking_domain=use_stocking_domain)
+                    params = _build_fetch_params(
+                        domains,
+                        current_size,
+                        last_item_id,
+                        use_stocking_domain=use_stocking_domain,
+                        status_mode=status_mode,
+                    )
                 if attempt == FETCH_MAX_RETRIES - 1:
                     raise
                 time.sleep(FETCH_BACKOFF_BASE * (2 ** attempt))
@@ -174,9 +200,23 @@ def fetch_active_items_by_domain(
                 size=size,
                 use_stocking_domain=True,
                 max_items=max_items,
+                status_mode="active",
             )
             all_rows.extend(rows)
             page += pages
+            if max_items is None or len(all_rows) < max_items:
+                remaining = None if max_items is None else max(max_items - len(all_rows), 0)
+                if remaining != 0:
+                    rows, pages, _ = _fetch_domain_rows(
+                        url=url,
+                        domains=normalized_domains,
+                        size=size,
+                        use_stocking_domain=True,
+                        max_items=remaining,
+                        status_mode="listing_state_only",
+                    )
+                    all_rows.extend(rows)
+                    page += pages
         else:
             for normalized_domain in normalized_domains:
                 remaining = None if max_items is None else max(max_items - len(all_rows), 0)
@@ -188,6 +228,20 @@ def fetch_active_items_by_domain(
                     size=size,
                     use_stocking_domain=True,
                     max_items=remaining,
+                    status_mode="active",
+                )
+                all_rows.extend(rows)
+                page += pages
+                remaining = None if max_items is None else max(max_items - len(all_rows), 0)
+                if remaining == 0:
+                    break
+                rows, pages, _ = _fetch_domain_rows(
+                    url=url,
+                    domains=[normalized_domain],
+                    size=size,
+                    use_stocking_domain=True,
+                    max_items=remaining,
+                    status_mode="listing_state_only",
                 )
                 all_rows.extend(rows)
                 page += pages
@@ -202,6 +256,7 @@ def fetch_active_items_by_domain(
             size=size,
             use_stocking_domain=False,
             max_items=max_items,
+            status_mode="active",
         )
     elapsed_ms = int((time.monotonic() - started) * 1000)
     json_log(
