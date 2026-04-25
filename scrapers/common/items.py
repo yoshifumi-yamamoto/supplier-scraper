@@ -53,8 +53,8 @@ def _normalize_stocking_domains(domains: Union[str, Iterable[str]]) -> list[str]
 
 def _build_fetch_params(domains: list[str], size: int, last_item_id: Union[str, None], *, use_stocking_domain: bool) -> dict[str, str]:
     params = {
-        "select": "ebay_item_id,ebay_user_id,stocking_url,listing_status,stocking_domain,sku,title,price,image_url",
-        "listing_status": "eq.Active",
+        "select": "ebay_item_id,ebay_user_id,stocking_url,listing_status,listing_state,stocking_domain,sku,title,price,image_url",
+        "or": "(listing_status.eq.Active,listing_state.eq.ACTIVE)",
         "order": "ebay_item_id.asc",
         "limit": str(size),
     }
