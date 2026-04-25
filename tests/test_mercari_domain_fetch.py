@@ -45,7 +45,7 @@ class FetchParamsTests(unittest.TestCase):
         )
 
         self.assertEqual(params["stocking_domain"], "in.(mercari.com,jp.mercari.com)")
-        self.assertEqual(params["listing_status"], "eq.Active")
+        self.assertEqual(params["or"], "(listing_status.eq.Active,listing_state.eq.ACTIVE)")
 
     def test_build_fetch_params_uses_ilike_any_fallback_for_multiple_domains(self) -> None:
         params = items._build_fetch_params(
