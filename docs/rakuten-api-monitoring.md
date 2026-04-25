@@ -66,5 +66,10 @@
   - `golfpartner`
 - 現時点の主ボトルネック:
   - `rakuten itemCode discovery unresolved`
-  - `keyword is not valid`
+  - `discovery deferred by run limit`
   - upstream item row が incomplete なため `scraped_stock_status` が `NULL` のまま残るケース
+
+## 次の改善方針
+- `RAKUTEN_DISCOVERY_LIMIT` は `60` を既定に引き上げる
+- 既存 `rakuten-pending:<itemCode>` は再 discovery せず、次回 run で API 直接照会して confirmed へ寄せる
+- `keyword is not valid` は少数化したため、以後は unresolved shop の個別精度改善を優先する

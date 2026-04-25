@@ -34,7 +34,7 @@ RAKUTEN_PENDING_PREFIX = "rakuten-pending:"
 MODEL_RE = re.compile(r"\b[a-z0-9]+(?:[-_][a-z0-9]+)+\b", re.IGNORECASE)
 ALNUM_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 JAPANESE_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]")
-DISCOVERY_LIMIT = max(int(os.getenv("RAKUTEN_DISCOVERY_LIMIT", "30")), 0)
+DISCOVERY_LIMIT = max(int(os.getenv("RAKUTEN_DISCOVERY_LIMIT", "60")), 0)
 FETCH_PAGE_SIZE = max(int(os.getenv("RAKUTEN_FETCH_PAGE_SIZE", "25")), 5)
 FETCH_MAX_ITEMS = max(int(os.getenv("RAKUTEN_FETCH_MAX_ITEMS", "120")), 0)
 
@@ -318,10 +318,17 @@ def run_pipeline(run_id: str) -> dict[str, Any]:
         try:
             saved_state, saved_item_code = _parse_saved_item_code(row.get("sku"))
             if saved_state == "pending":
-                status = ScrapeStatus.UNKNOWN
-                message = f"rakuten candidate unresolved: {saved_item_code or 'pending'}"
-                next_sku = row.get("sku")
                 item_code = saved_item_code or item_code
+                raw = fetch_item_by_code(item_code, shop_code=shop_code) if item_code else None
+                if raw and raw.get("itemCode"):
+                    status, normalized_message = normalize_item(raw)
+                    message = f"{normalized_message} | rakuten pending candidate confirmed"
+                    next_sku = f"{RAKUTEN_CONFIRMED_PREFIX}{raw.get('itemCode')}"
+                    item_code = str(raw.get("itemCode"))
+                else:
+                    status = ScrapeStatus.UNKNOWN
+                    message = f"rakuten candidate unresolved: {saved_item_code or 'pending'}"
+                    next_sku = row.get("sku")
             elif saved_state == "confirmed" and saved_item_code:
                 item_code = saved_item_code
                 raw = fetch_item_by_code(item_code, shop_code=shop_code)

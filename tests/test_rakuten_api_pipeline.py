@@ -67,6 +67,30 @@ class RakutenApiPipelineTests(unittest.TestCase):
 
     @patch("scrapers.sites.rakuten.adapter.update_item_stock_bulk")
     @patch(
+        "scrapers.sites.rakuten.adapter.fetch_item_by_code",
+        return_value={"availability": 1, "itemCode": "testshop:pending123"},
+    )
+    @patch("scrapers.sites.rakuten.adapter.fetch_active_items_by_domain")
+    @patch("scrapers.sites.rakuten.adapter.auth_ready", return_value=True)
+    def test_run_pipeline_confirms_pending_candidate(self, _auth_ready, fetch_items_mock, fetch_item_mock, bulk_update_mock) -> None:
+        fetch_items_mock.return_value = [
+            {
+                "ebay_item_id": "149",
+                "stocking_url": "https://item.rakuten.co.jp/testshop/pending123/",
+                "sku": "rakuten-pending:testshop:pending123",
+            }
+        ]
+
+        result = rakuten_adapter.run_pipeline("run-pending")
+
+        self.assertEqual(result["status"], "success")
+        fetch_item_mock.assert_called_once_with("testshop:pending123", shop_code="testshop")
+        updates = bulk_update_mock.call_args.args[0]
+        self.assertEqual(updates[0]["scraped_stock_status"], "在庫あり")
+        self.assertEqual(updates[0]["sku"], "rakuten:testshop:pending123")
+
+    @patch("scrapers.sites.rakuten.adapter.update_item_stock_bulk")
+    @patch(
         "scrapers.sites.rakuten.adapter.search_items",
         return_value=[
             {
