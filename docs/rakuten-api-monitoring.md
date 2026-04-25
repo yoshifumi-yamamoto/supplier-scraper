@@ -48,3 +48,23 @@
 - 既定 endpoint は `https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260401`
 - 初回疎通は `keyword` で確認し、正式 `itemCode` は API レスポンスから保存する
 - URL / HTML の `sku` は正式 `itemCode` とみなさない
+
+## 2026-04-25 検証結果
+- `全部 不明` の状態からは脱出した
+- 最新の Rakuten active items 集計:
+  - 総件数: `288`
+  - `在庫あり`: `2`
+  - `在庫なし`: `14`
+  - `不明`: `216`
+  - `NULL`: `56`
+- SKU 集計:
+  - confirmed `rakuten:<itemCode>`: `2`
+  - pending `rakuten-pending:<itemCode>`: `6`
+  - empty: `279`
+- 少なくとも次の shop で `itemCode` 確定が始まっている:
+  - `sazac-store`
+  - `golfpartner`
+- 現時点の主ボトルネック:
+  - `rakuten itemCode discovery unresolved`
+  - `keyword is not valid`
+  - upstream item row が incomplete なため `scraped_stock_status` が `NULL` のまま残るケース

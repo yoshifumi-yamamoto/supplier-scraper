@@ -33,6 +33,7 @@ RAKUTEN_CONFIRMED_PREFIX = "rakuten:"
 RAKUTEN_PENDING_PREFIX = "rakuten-pending:"
 MODEL_RE = re.compile(r"\b[a-z0-9]+(?:[-_][a-z0-9]+)+\b", re.IGNORECASE)
 ALNUM_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
+JAPANESE_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]")
 DISCOVERY_LIMIT = max(int(os.getenv("RAKUTEN_DISCOVERY_LIMIT", "30")), 0)
 
 
@@ -163,11 +164,6 @@ def _score_candidate(
 
 def _build_search_keywords(*, title: str, local_code_hint: str | None, page_models: list[str] | None = None) -> list[str]:
     keywords: list[str] = []
-    models = _extract_models(local_code_hint, title, *(page_models or []))
-    for model in models[:3]:
-        normalized_model = model.replace("_", "-").strip("- ")
-        if len(normalized_model) >= 5 and not normalized_model.isdigit():
-            keywords.append(normalized_model)
     normalized_title = " ".join((title or "").split())
     if normalized_title:
         cleaned_title = re.sub(r"[^\w\s\-]", " ", normalized_title, flags=re.UNICODE)
@@ -175,10 +171,34 @@ def _build_search_keywords(*, title: str, local_code_hint: str | None, page_mode
         title_tokens = [
             token
             for token in cleaned_title.split()
-            if len(ALNUM_RE.findall(token)) > 0 and not token.isdigit()
+            if len(ALNUM_RE.findall(token)) > 0 or JAPANESE_RE.search(token)
         ]
-        if title_tokens:
-            keywords.append(" ".join(title_tokens[:8])[:120])
+        filtered_title_tokens = [
+            token
+            for token in title_tokens
+            if not token.isdigit() and (JAPANESE_RE.search(token) or len(token) >= 3)
+        ]
+        if filtered_title_tokens:
+            keywords.append(" ".join(filtered_title_tokens[:8])[:120])
+
+    models = _extract_models(local_code_hint, title, *(page_models or []))
+    for model in models[:4]:
+        normalized_model = model.replace("_", "-").strip("- ")
+        if len(normalized_model) < 4:
+            continue
+        if normalized_model.isdigit():
+            continue
+        if normalized_model not in keywords:
+            keywords.append(normalized_model)
+
+    for hint in page_models or []:
+        normalized_hint = re.sub(r"\s+", " ", (hint or "")).strip()
+        if not normalized_hint or normalized_hint.isdigit():
+            continue
+        if len(normalized_hint) < 4 and not JAPANESE_RE.search(normalized_hint):
+            continue
+        if normalized_hint not in keywords:
+            keywords.append(normalized_hint[:120])
     unique_keywords: list[str] = []
     for keyword in keywords:
         value = keyword.strip()
@@ -187,6 +207,8 @@ def _build_search_keywords(*, title: str, local_code_hint: str | None, page_mode
         if len(value) < 3:
             continue
         if value.isdigit():
+            continue
+        if not JAPANESE_RE.search(value) and len(ALNUM_RE.findall(value)) == 1 and len(value) < 5:
             continue
         if value not in unique_keywords:
             unique_keywords.append(value)

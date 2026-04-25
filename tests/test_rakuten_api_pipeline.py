@@ -30,6 +30,17 @@ class RakutenApiPipelineTests(unittest.TestCase):
         self.assertEqual(normalize_item({"availability": 0})[0], ScrapeStatus.OUT_OF_STOCK)
         self.assertEqual(normalize_item({"availability": None})[0], ScrapeStatus.UNKNOWN)
 
+    def test_build_search_keywords_prefers_title_and_skips_numeric_only_code(self) -> None:
+        keywords = rakuten_adapter._build_search_keywords(
+            title="テーラーメイド M2 ドライバー 10.5",
+            local_code_hint="2100412572169",
+            page_models=["TM1-217"],
+        )
+
+        self.assertIn("テーラーメイド M2 ドライバー 10 5", keywords)
+        self.assertIn("TM1-217", keywords)
+        self.assertNotIn("2100412572169", keywords)
+
     @patch("scrapers.sites.rakuten.adapter.update_item_stock_bulk")
     @patch("scrapers.sites.rakuten.adapter.fetch_item_by_code", return_value={"availability": 0})
     @patch("scrapers.sites.rakuten.adapter.fetch_active_items_by_domain")
