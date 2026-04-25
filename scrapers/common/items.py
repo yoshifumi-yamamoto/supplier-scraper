@@ -94,6 +94,7 @@ def _fetch_domain_rows(
     domains: list[str],
     size: int,
     use_stocking_domain: bool,
+    max_items: Optional[int] = None,
 ) -> tuple[list[dict[str, Any]], int, bool]:
     all_rows: list[dict[str, Any]] = []
     last_item_id = None
@@ -137,6 +138,9 @@ def _fetch_domain_rows(
         if not data:
             break
         all_rows.extend(data)
+        if max_items is not None and len(all_rows) >= max_items:
+            all_rows = all_rows[:max_items]
+            break
         last_item_id = data[-1]["ebay_item_id"]
         if len(data) < current_size:
             break
@@ -144,7 +148,12 @@ def _fetch_domain_rows(
     return all_rows, page, fallback_used
 
 
-def fetch_active_items_by_domain(domain: Union[str, Iterable[str]], page_size: Union[int, None] = None) -> list[dict[str, Any]]:
+def fetch_active_items_by_domain(
+    domain: Union[str, Iterable[str]],
+    page_size: Union[int, None] = None,
+    *,
+    max_items: Optional[int] = None,
+) -> list[dict[str, Any]]:
     if not _enabled():
         raise RuntimeError("SUPABASE_URL / SUPABASE_KEY is not set")
     started = time.monotonic()
@@ -164,16 +173,21 @@ def fetch_active_items_by_domain(domain: Union[str, Iterable[str]], page_size: U
                 domains=normalized_domains,
                 size=size,
                 use_stocking_domain=True,
+                max_items=max_items,
             )
             all_rows.extend(rows)
             page += pages
         else:
             for normalized_domain in normalized_domains:
+                remaining = None if max_items is None else max(max_items - len(all_rows), 0)
+                if remaining == 0:
+                    break
                 rows, pages, _ = _fetch_domain_rows(
                     url=url,
                     domains=[normalized_domain],
                     size=size,
                     use_stocking_domain=True,
+                    max_items=remaining,
                 )
                 all_rows.extend(rows)
                 page += pages
@@ -187,6 +201,7 @@ def fetch_active_items_by_domain(domain: Union[str, Iterable[str]], page_size: U
             domains=normalized_domains,
             size=size,
             use_stocking_domain=False,
+            max_items=max_items,
         )
     elapsed_ms = int((time.monotonic() - started) * 1000)
     json_log(

@@ -35,6 +35,8 @@ MODEL_RE = re.compile(r"\b[a-z0-9]+(?:[-_][a-z0-9]+)+\b", re.IGNORECASE)
 ALNUM_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 JAPANESE_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]")
 DISCOVERY_LIMIT = max(int(os.getenv("RAKUTEN_DISCOVERY_LIMIT", "30")), 0)
+FETCH_PAGE_SIZE = max(int(os.getenv("RAKUTEN_FETCH_PAGE_SIZE", "25")), 5)
+FETCH_MAX_ITEMS = max(int(os.getenv("RAKUTEN_FETCH_MAX_ITEMS", "120")), 0)
 
 
 def _normalize_text(text: str | None) -> str:
@@ -272,7 +274,11 @@ def run_pipeline(run_id: str) -> dict[str, Any]:
     try:
         if not auth_ready():
             raise RakutenApiError("rakuten auth not configured")
-        items = fetch_active_items_by_domain(RAKUTEN_DOMAINS, page_size=50)
+        items = fetch_active_items_by_domain(
+            RAKUTEN_DOMAINS,
+            page_size=FETCH_PAGE_SIZE,
+            max_items=FETCH_MAX_ITEMS or None,
+        )
         if not items:
             finish_step(fetch_step, status="success", message="rakuten no target items")
             return {

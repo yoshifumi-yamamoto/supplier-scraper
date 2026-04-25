@@ -56,7 +56,11 @@ class RakutenApiPipelineTests(unittest.TestCase):
         result = rakuten_adapter.run_pipeline("run-1")
 
         self.assertEqual(result["status"], "success")
-        fetch_items_mock.assert_called_once_with(rakuten_adapter.RAKUTEN_DOMAINS, page_size=50)
+        fetch_items_mock.assert_called_once_with(
+            rakuten_adapter.RAKUTEN_DOMAINS,
+            page_size=rakuten_adapter.FETCH_PAGE_SIZE,
+            max_items=rakuten_adapter.FETCH_MAX_ITEMS or None,
+        )
         fetch_item_mock.assert_called_once_with("abc123", shop_code="testshop")
         updates = bulk_update_mock.call_args.args[0]
         self.assertEqual(updates[0]["scraped_stock_status"], "在庫なし")
