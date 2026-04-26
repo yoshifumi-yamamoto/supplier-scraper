@@ -83,6 +83,10 @@
   - `scrapers/sites/yahoo_shopping/client.py`
   - `scrapers/sites/yahoo_shopping/normalizer.py`
   - `scrapers/sites/yahoo_shopping/adapter.py`
+- 2026-04-26 時点:
+  - runner / registry / adapter の skeleton は追加済み
+  - `--site yahoo_shopping` で run path には乗る
+  - ただし API auth / request contract は未確定なので、現状は `auth not configured` または `client not implemented yet` を返す段階
 - 懸念:
   - 複数 seller / variation item の扱い
   - 価格・在庫が seller 単位なのか item 単位なのかの統一

@@ -9,6 +9,7 @@ from scrapers.sites.rakuten.adapter import run_pipeline as run_rakuten
 from scrapers.sites.secondstreet.adapter import run_pipeline as run_secondstreet
 from scrapers.sites.yafuoku.adapter import run_pipeline as run_yafuoku
 from scrapers.sites.yahoofleama.adapter import run_pipeline as run_yahoofleama
+from scrapers.sites.yahoo_shopping.adapter import run_pipeline as run_yahoo_shopping
 from scrapers.sites.yodobashi.adapter import run_pipeline as run_yodobashi
 
 SiteRunner = Callable[[str], dict]
@@ -21,6 +22,7 @@ SITE_RUNNERS: dict[str, SiteRunner] = {
     "surugaya": run_surugaya,
     "yafuoku": run_yafuoku,
     "yodobashi": run_yodobashi,
+    "yahoo_shopping": run_yahoo_shopping,
     "hardoff": run_hardoff,
     "kitamura": run_kitamura,
     "rakuten": run_rakuten,
