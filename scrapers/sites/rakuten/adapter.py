@@ -253,6 +253,25 @@ def _discover_item(
     return best_candidate, best_score, best_reasons, best_keyword
 
 
+def _candidate_codes_from_page(*, shop_code: str, local_code_hint: str | None, page_sku: str | None, page_models: list[str] | None = None) -> list[str]:
+    candidates: list[str] = []
+    for raw in [page_sku, local_code_hint, *(page_models or [])]:
+        value = (raw or "").strip()
+        if not value:
+            continue
+        if ":" in value:
+            left, right = value.split(":", 1)
+            if left.lower() == shop_code.lower() and right:
+                full_code = f"{left}:{right}"
+                if full_code not in candidates:
+                    candidates.append(full_code)
+        elif not value.isdigit() and len(value) >= 4:
+            full_code = f"{shop_code}:{value}"
+            if full_code not in candidates:
+                candidates.append(full_code)
+    return candidates
+
+
 def _log_item_result(*, run_id: str, ebay_item_id: str, stocking_url: str, item_code: str | None, shop_code: str | None, status: ScrapeStatus, message: str) -> None:
     json_log(
         "info",
@@ -381,6 +400,53 @@ def run_pipeline(run_id: str) -> dict[str, Any]:
                         continue
                     page_title = page_hints.get("page_title") or row_title
                     page_models = page_hints.get("page_models") or []
+                    page_sku = page_hints.get("page_sku")
+                    direct_codes = _candidate_codes_from_page(
+                        shop_code=shop_code,
+                        local_code_hint=local_code_hint,
+                        page_sku=page_sku,
+                        page_models=page_models,
+                    )
+                    direct_match = None
+                    for direct_code in direct_codes:
+                        raw = fetch_item_by_code(direct_code, shop_code=shop_code)
+                        if raw and raw.get("itemCode"):
+                            direct_match = raw
+                            break
+                    if direct_match and direct_match.get("itemCode"):
+                        item_code = str(direct_match["itemCode"])
+                        status, normalized_message = normalize_item(direct_match)
+                        message = f"{normalized_message} | direct_itemCode_from_html"
+                        next_sku = f"{RAKUTEN_CONFIRMED_PREFIX}{item_code}"
+                        pending_updates.append(
+                            {
+                                "ebay_item_id": ebay_item_id,
+                                "scraped_stock_status": STATUS_MAP[status],
+                                "is_scraped": status != ScrapeStatus.UNKNOWN,
+                                "sku": next_sku,
+                            }
+                        )
+                        _log_item_result(
+                            run_id=run_id,
+                            ebay_item_id=str(ebay_item_id),
+                            stocking_url=stocking_url,
+                            shop_code=shop_code,
+                            item_code=item_code,
+                            status=status,
+                            message=message,
+                        )
+                        if status == ScrapeStatus.IN_STOCK:
+                            in_stock += 1
+                        elif status == ScrapeStatus.OUT_OF_STOCK:
+                            out_of_stock += 1
+                        else:
+                            unknown += 1
+                        finish_step(step_id, status="success", message=message)
+                        processed += 1
+                        if len(pending_updates) >= 20:
+                            update_item_stock_bulk(pending_updates)
+                            pending_updates = []
+                        continue
                     candidate, confidence, reasons, _ = _discover_item(
                         shop_code=shop_code,
                         local_code_hint=local_code_hint,

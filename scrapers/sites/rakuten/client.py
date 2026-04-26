@@ -58,6 +58,14 @@ def _html_models(html: str) -> list[str]:
     return models
 
 
+def _html_sku(html: str) -> str | None:
+    match = re.search(r'itemprop="sku"\s+content="([^"]+)"', html, re.IGNORECASE)
+    if not match:
+        return None
+    value = re.sub(r"\s+", "", match.group(1)).strip()
+    return value or None
+
+
 def auth_ready() -> bool:
     return bool(RAKUTEN_APPLICATION_ID and RAKUTEN_ACCESS_KEY and RAKUTEN_BASE_URL)
 
@@ -119,6 +127,7 @@ def fetch_page_hints(stocking_url: str) -> dict[str, Any]:
     return {
         "page_title": _html_title(html),
         "page_models": _html_models(html),
+        "page_sku": _html_sku(html),
     }
 
 

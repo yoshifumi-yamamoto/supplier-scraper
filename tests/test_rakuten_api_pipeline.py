@@ -41,6 +41,16 @@ class RakutenApiPipelineTests(unittest.TestCase):
         self.assertIn("TM1-217", keywords)
         self.assertNotIn("2100412572169", keywords)
 
+    def test_candidate_codes_from_page_prefers_shop_scoped_values(self) -> None:
+        codes = rakuten_adapter._candidate_codes_from_page(
+            shop_code="testshop",
+            local_code_hint="abc123",
+            page_sku="testshop:def456",
+            page_models=["ghi-789", "1234"],
+        )
+
+        self.assertEqual(codes, ["testshop:def456", "testshop:abc123", "testshop:ghi-789"])
+
     @patch("scrapers.sites.rakuten.adapter.update_item_stock_bulk")
     @patch("scrapers.sites.rakuten.adapter.fetch_item_by_code", return_value={"availability": 0})
     @patch("scrapers.sites.rakuten.adapter.fetch_active_items_by_domain")
@@ -88,6 +98,46 @@ class RakutenApiPipelineTests(unittest.TestCase):
         updates = bulk_update_mock.call_args.args[0]
         self.assertEqual(updates[0]["scraped_stock_status"], "在庫あり")
         self.assertEqual(updates[0]["sku"], "rakuten:testshop:pending123")
+
+    @patch("scrapers.sites.rakuten.adapter.update_item_stock_bulk")
+    @patch(
+        "scrapers.sites.rakuten.adapter.fetch_item_by_code",
+        side_effect=[None, {"availability": 1, "itemCode": "testshop:def456"}],
+    )
+    @patch(
+        "scrapers.sites.rakuten.adapter.fetch_page_hints",
+        return_value={"page_title": "商品名", "page_models": [], "page_sku": "testshop:def456"},
+    )
+    @patch("scrapers.sites.rakuten.adapter.fetch_active_items_by_domain")
+    @patch("scrapers.sites.rakuten.adapter.auth_ready", return_value=True)
+    def test_run_pipeline_confirms_direct_item_code_from_html(
+        self,
+        _auth_ready,
+        fetch_items_mock,
+        _page_hints_mock,
+        fetch_item_mock,
+        bulk_update_mock,
+    ) -> None:
+        fetch_items_mock.return_value = [
+            {
+                "ebay_item_id": "150",
+                "stocking_url": "https://item.rakuten.co.jp/testshop/abc123/",
+                "title": "商品名",
+                "price": 1000,
+                "image_url": None,
+                "sku": None,
+            }
+        ]
+
+        result = rakuten_adapter.run_pipeline("run-direct")
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(fetch_item_mock.call_count, 2)
+        self.assertEqual(fetch_item_mock.call_args_list[0].args[0], "abc123")
+        self.assertEqual(fetch_item_mock.call_args_list[1].args[0], "testshop:def456")
+        updates = bulk_update_mock.call_args.args[0]
+        self.assertEqual(updates[0]["scraped_stock_status"], "在庫あり")
+        self.assertEqual(updates[0]["sku"], "rakuten:testshop:def456")
 
     @patch("scrapers.sites.rakuten.adapter.update_item_stock_bulk")
     @patch(
